@@ -1,5 +1,8 @@
 # flutstaller
 
+[![CI](https://github.com/kernelk14/flutstaller/actions/workflows/ci.yml/badge.svg)](https://github.com/kernelk14/flutstaller/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A single, re-runnable PowerShell program that sets up a **Flutter development
 environment on Windows** — Flutter, the Android SDK command-line tools, and
 Visual Studio 2026 with the C++ toolchain — all under one directory, from the
