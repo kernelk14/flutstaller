@@ -2,6 +2,13 @@
 
 Thanks for taking the time to improve this project.
 
+> **Context:** the code in this repository was written by an AI coding agent
+> ([OpenCode](https://opencode.ai)) from a written specification, and a human
+> reviewed and published the result. That means the starting point is
+> *plausible but unproven* — which is exactly where a good contributor is
+> useful. The style rules below exist to keep the code reviewable, because
+> "readable" is the whole defence of this project.
+
 ## Getting set up
 
 ```powershell

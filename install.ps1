@@ -19,6 +19,10 @@
     manifest, so the script always uses current official artifacts rather than
     hard-coded links.
 
+    NOTE: This script was written by an AI coding agent (OpenCode) from a
+    written specification. It is MIT licensed and meant to be read: the whole
+    program is this one file.
+
 .PARAMETER InstallRoot
     Root directory for all installed components. Default: C:\development
 
@@ -68,6 +72,14 @@
     This script is designed to be run directly from a URL:
 
         irm https://raw.githubusercontent.com/OWNER/REPO/main/install.ps1 | iex
+
+    That runs whatever the server returns at that moment, without showing you
+    the code first. This script was written by an AI coding agent (OpenCode);
+    it is MIT licensed and the whole program is this one file, so reading it
+    first is a reasonable thing to do:
+
+        irm https://raw.githubusercontent.com/OWNER/REPO/main/install.ps1 -OutFile install.ps1
+        notepad install.ps1
 
     In that mode there is no script file on disk, so the script adapts:
       * it never calls exit (that would close the caller's PowerShell session);
@@ -468,6 +480,10 @@ function Write-TuiBanner {
     Write-Host ($t.DV + $title.PadRight($inner) + $t.DV) -ForegroundColor Cyan
     $sub = '   Flutter SDK   ' + $t.Bullet + '   Android SDK (command-line tools)   ' + $t.Bullet + '   Visual Studio 2026 (C++)'
     Write-Host ($t.DV + $sub.PadRight($inner) + $t.DV) -ForegroundColor Cyan
+    Write-Host ($t.DV + (' ' * $inner) + $t.DV) -ForegroundColor Cyan
+    $notice = '   AI-generated with OpenCode - please read the source before running it.'
+    if ($notice.Length -gt $inner) { $notice = $notice.Substring(0, $inner) }
+    Write-Host ($t.DV + $notice.PadRight($inner) + $t.DV) -ForegroundColor Yellow
     Write-Host ($t.DV + (' ' * $inner) + $t.DV) -ForegroundColor Cyan
     Write-Host ($t.DBL + ([string]$t.DH * $inner) + $t.DBR) -ForegroundColor Cyan
 }
@@ -2178,6 +2194,7 @@ $script:WorkDir = Join-Path ([System.IO.Path]::GetTempPath()) ("flutstaller-{0}-
 New-Item -ItemType Directory -Path $script:WorkDir -Force | Out-Null
 
 Write-Log 'Flutter development environment setup' 'TITLE'
+Write-Log "This script was written by an AI (OpenCode). Please read the source before running it." 'TITLE'
 Write-Log "Log file: $($script:LogFile)"
 Write-Log "Install root: $InstallRoot"
 Write-Log "PowerShell: $($PSVersionTable.PSVersion) on $env:COMPUTERNAME"

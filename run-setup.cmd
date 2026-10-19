@@ -2,8 +2,12 @@
 rem ---------------------------------------------------------------------------
 rem  Launcher for the Flutter development environment setup.
 rem
-rem  It does NOT change the machine execution policy and does NOT use
-rem  -ExecutionPolicy Bypass. Before running the script it checks whether
+rem  The script it runs was written by an AI coding agent (OpenCode) from a
+rem  written specification. It is MIT licensed and the whole program is one
+rem  readable file - see install.ps1.
+rem
+rem  This launcher does NOT change the machine execution policy and does NOT
+rem  use -ExecutionPolicy Bypass. Before running the script it checks whether
 rem  PowerShell would refuse to execute it and, if so, prints the exact fix.
 rem ---------------------------------------------------------------------------
 setlocal
@@ -16,6 +20,12 @@ if errorlevel 1 (
     echo ERROR: powershell.exe was not found on PATH.
     exit /b 1
 )
+
+echo.
+echo   flutstaller - Flutter development environment setup for Windows
+echo   The script it runs was written by an AI coding agent ^(OpenCode^).
+echo   It is MIT licensed and the whole program is one readable file: install.ps1
+echo.
 
 rem --- pre-flight: would PowerShell refuse to run the script? ------------------
 rem  exit 0 = fine, 3 = blocked by the mark-of-the-web, 4 = policy is
