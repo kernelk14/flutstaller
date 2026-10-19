@@ -9,8 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A terminal user interface.** The installer now draws a banner, framed
+  section headers, boxed panels and a colour-coded closing report, and it
+  falls back to plain ASCII when the console cannot render box-drawing
+  characters. A spinner with the elapsed time is shown while a long-running
+  program is in progress.
+- **An interactive menu** asking which components to install, so a single run
+  can install just the Flutter SDK, just the Android SDK, or just Visual
+  Studio. It is skipped when running unattended (`-Yes`) or from a pipe.
+- **A prerequisites prompt.** When Git for Windows or a JDK is missing, the
+  installer shows a panel explaining what is missing, why it matters and where
+  it comes from, and asks whether to install it. Nothing outside the three
+  components is ever installed without that answer.
+- **A closing report** listing every component with its state (installed,
+  already present, skipped, failed, pending) and a list of the actions that
+  are still outstanding.
 - Remote execution support: the script can be run with
-  `irm https://raw.githubusercontent.com/OWNER/REPO/main/install.ps1 | iex`.
+  `irm https://raw.githubusercontent.com/kernelk14/flutstaller/main/install.ps1 | iex`.
   - Pipe mode is detected automatically; the script never calls `exit` in that
     mode, because that would terminate the caller's PowerShell session.
   - Configuration through environment variables: `FLUTSTALLER_INSTALL_ROOT`,
@@ -35,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A failing component no longer aborts the rest of the run.** Each component
+  is installed in isolation; the environment is still configured, the
+  remaining components are still installed, and the failure is reported with a
+  next action. Previously a failure in the Visual Studio step threw and left
+  the machine with no `PATH` entries, no `ANDROID_HOME` and no Android SDK.
 - The Android SDK is now configured with the **Android CLI** (`android.exe`),
   the tool shipped with command-line tools 23.0 and newer and the one the
   Android documentation now recommends. `sdkmanager` is deprecated and is only
@@ -45,6 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `compileSdkVersion` rather than guessed.
 - Visual Studio is installed with `--passive` instead of `--quiet`, so the
   Microsoft licence agreement is always shown and accepted by the operator.
+- A machine-wide `ANDROID_HOME` or `ANDROID_SDK_ROOT` that points somewhere
+  else is now called out, because it shadows the value set for the account.
 
 ### Fixed
 
@@ -59,6 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unrolling it, so a single-element result is still an array.
 - Script-level `return` statements no longer print their value to standard
   output.
+- A native command that writes to stderr no longer becomes a terminating
+  error (the Android command-line tools print a deprecation warning there).
 
 ## [0.1.0] - Initial release
 

@@ -232,6 +232,7 @@ $script:ScriptPath    = $PSCommandPath
 $script:ProgressActive = $false
 $script:LastBarTime = $null
 $script:LastBarStatus = $null
+$script:Results = New-Object System.Collections.Generic.List[object]
 $script:Failures      = New-Object System.Collections.Generic.List[string]
 $script:Warnings      = New-Object System.Collections.Generic.List[string]
 $script:Actions       = New-Object System.Collections.Generic.List[string]
@@ -410,6 +411,195 @@ function Write-Status {
 }
 
 # ======================================================================================
+# Terminal user interface
+#
+# The script is a console application, so it draws a small TUI: a banner, framed
+# section headers, boxed panels and a status report. Everything degrades to
+# plain text when the console cannot render box-drawing characters.
+# ======================================================================================
+function Initialize-Tui {
+    $unicode = $false
+    try {
+        # Only use box-drawing characters when the output is going to a console
+        # that can render them. A redirected stream (a log file, a pipe, CI)
+        # gets plain ASCII so nothing is mangled.
+        if (Test-InteractiveConsole) {
+            if ($env:WT_SESSION) { $unicode = $true }
+            elseif ([Console]::OutputEncoding -and [Console]::OutputEncoding.CodePage -eq 65001) { $unicode = $true }
+        }
+    } catch { }
+
+    if ($unicode) {
+        $script:Tui = @{
+            H = [char]0x2500; V = [char]0x2502; TL = [char]0x250C; TR = [char]0x2510
+            BL = [char]0x2514; BR = [char]0x2518; T = [char]0x251C; R = [char]0x2524
+            DH = [char]0x2550; DV = [char]0x2551; DTL = [char]0x2554; DTR = [char]0x2557
+            DBL = [char]0x255A; DBR = [char]0x255D
+            Ok = [char]0x2714; Fail = [char]0x2716; Warn = [char]0x26A0; Info = [char]0x2139
+            Skip = [char]0x00B7; Arrow = [char]0x2192; Bullet = [char]0x00B7; Ellipsis = [char]0x2026
+        }
+    } else {
+        $script:Tui = @{
+            H = '-'; V = '|'; TL = '+'; TR = '+'; BL = '+'; BR = '+'; T = '+'; R = '+'
+            DH = '='; DV = '|'; DTL = '+'; DTR = '+'; DBL = '+'; DBR = '+'
+            Ok = '[+]'; Fail = '[x]'; Warn = '[!]'; Info = '[i]'; Skip = '[.]'
+            Arrow = '->'; Bullet = '*'; Ellipsis = '...'
+        }
+    }
+}
+
+function Get-TuiWidth {
+    $w = 80
+    try { $w = $Host.UI.RawUI.WindowSize.Width } catch { }
+    if ($w -lt 60) { $w = 60 }
+    if ($w -gt 100) { $w = 100 }
+    return $w
+}
+
+function Write-TuiBanner {
+    $w = Get-TuiWidth
+    $t = $script:Tui
+    $inner = $w - 2
+    Clear-ProgressBar
+    Write-Host ''
+    Write-Host ($t.DTL + ([string]$t.DH * $inner) + $t.DTR) -ForegroundColor Cyan
+    Write-Host ($t.DV + (' ' * $inner) + $t.DV) -ForegroundColor Cyan
+    $title = '   flutstaller   ' + $t.Bullet + '   Flutter development environment for Windows'
+    Write-Host ($t.DV + $title.PadRight($inner) + $t.DV) -ForegroundColor Cyan
+    $sub = '   Flutter SDK   ' + $t.Bullet + '   Android SDK (command-line tools)   ' + $t.Bullet + '   Visual Studio 2026 (C++)'
+    Write-Host ($t.DV + $sub.PadRight($inner) + $t.DV) -ForegroundColor Cyan
+    Write-Host ($t.DV + (' ' * $inner) + $t.DV) -ForegroundColor Cyan
+    Write-Host ($t.DBL + ([string]$t.DH * $inner) + $t.DBR) -ForegroundColor Cyan
+}
+
+function Write-TuiSection {
+    param([string] $Title, [string] $Detail = '')
+    $w = Get-TuiWidth
+    $t = $script:Tui
+    Clear-ProgressBar
+    Write-Host ''
+    Write-Host ([string]$t.H * $w) -ForegroundColor DarkCyan
+    $line = '  ' + $Title
+    if ($Detail) { $line += '   ' + $t.Bullet + ' ' + $Detail }
+    Write-Host $line -ForegroundColor Cyan
+    Write-Host ([string]$t.H * $w) -ForegroundColor DarkCyan
+    Write-LogFileOnly ("--- $Title $(if ($Detail) { "- $Detail" }) ---") 'STEP'
+}
+
+function Write-TuiBox {
+    param(
+        [object[]] $Lines,
+        [string] $Title = '',
+        [string] $BorderColor = 'DarkCyan',
+        [string] $TextColor = 'Gray',
+        [switch] $Wrap
+    )
+    $w = Get-TuiWidth
+    $t = $script:Tui
+    $inner = $w - 2
+    Clear-ProgressBar
+
+    if ($Title) {
+        $head = $t.TL + $t.H + ' ' + $Title + ' '
+        $top = $head + ([string]$t.H * [math]::Max(0, $inner - $head.Length)) + $t.TR
+    } else {
+        $top = $t.TL + ([string]$t.H * $inner) + $t.TR
+    }
+    Write-Host $top -ForegroundColor $BorderColor
+    foreach ($l in $Lines) {
+        # A line may be a plain string, or a hashtable with Text and Color.
+        $text = $l
+        $color = $TextColor
+        if ($l -is [hashtable]) {
+            if ($l.ContainsKey('Text')) { $text = $l['Text'] }
+            if ($l.ContainsKey('Color')) { $color = $l['Color'] }
+        }
+        $text = ' ' + $text
+        if ($text.Length -gt $inner) {
+            if ($Wrap) {
+                # Long lines (URLs) are wrapped rather than cut off.
+                $remaining = $text
+                while ($remaining.Length -gt $inner) {
+                    Write-Host ($t.V + $remaining.Substring(0, $inner).PadRight($inner) + $t.V) -ForegroundColor $color
+                    $remaining = ' ' + $remaining.Substring($inner)
+                }
+                if ($remaining.Length -gt 0) {
+                    Write-Host ($t.V + $remaining.PadRight($inner) + $t.V) -ForegroundColor $color
+                }
+                continue
+            }
+            $text = $text.Substring(0, [math]::Max(1, $inner - 1)) + '~'
+        }
+        Write-Host ($t.V + $text.PadRight($inner) + $t.V) -ForegroundColor $color
+    }
+    Write-Host ($t.BL + ([string]$t.H * $inner) + $t.BR) -ForegroundColor $BorderColor
+}
+
+function Write-TuiBullet {
+    param([string] $Text, [string] $Color = 'Gray', [int] $Indent = 2)
+    Write-Host (' ' * $Indent + $script:Tui.Bullet + ' ' + $Text) -ForegroundColor $Color
+}
+
+function Write-TuiStatus {
+    <#
+        A status marker plus text, e.g.  [ok] Flutter SDK installed
+    #>
+    param([string] $State, [string] $Text, [int] $Indent = 2)
+    $t = $script:Tui
+    switch ($State) {
+        'ok'     { $m = $t.Ok;   $c = 'Green' }
+        'fail'   { $m = $t.Fail; $c = 'Red' }
+        'warn'   { $m = $t.Warn; $c = 'Yellow' }
+        'skip'   { $m = $t.Skip; $c = 'DarkGray' }
+        default  { $m = $t.Info; $c = 'Cyan' }
+    }
+    Write-Host (' ' * $Indent + $m + ' ' + $Text) -ForegroundColor $c
+}
+
+function Format-TuiColumns {
+    <#
+        Turns rows of @(left, right) into aligned text that fits the console.
+    #>
+    param([object[]] $Rows, [int] $LeftWidth = 0, [int] $Gap = 2)
+    if (-not $Rows -or $Rows.Count -eq 0) { return @() }
+    $w = Get-TuiWidth
+    if ($LeftWidth -le 0) {
+        $LeftWidth = 0
+        foreach ($r in $Rows) { if ($r[0].Length -gt $LeftWidth) { $LeftWidth = $r[0].Length } }
+        if ($LeftWidth -gt 46) { $LeftWidth = 46 }
+    }
+    $rightWidth = $w - $LeftWidth - $Gap - 4
+    if ($rightWidth -lt 12) { $rightWidth = 12 }
+
+    $out = @()
+    foreach ($r in $Rows) {
+        $left = $r[0]
+        $right = $r[1]
+        if ($left.Length -gt $LeftWidth) { $left = $left.Substring(0, $LeftWidth - 1) + '~' }
+        $line = $left.PadRight($LeftWidth) + (' ' * $Gap) + $right
+        if ($line.Length -gt $w - 3) { $line = $line.Substring(0, $w - 3) }
+        $out += $line
+    }
+    return $out
+}
+
+function Write-TuiSpinner {
+    <#
+        Redraws a single-line spinner with the elapsed time. Used while a long
+        running external program is in progress.
+    #>
+    param([int] $Index, [double] $Elapsed, [string] $Text)
+    if (-not (Test-InteractiveConsole)) { return }
+    $frames = @([char]0x28B2, [char]0x28B3, [char]0x28BF, [char]0x28B0, [char]0x28B1)
+    $frame = $frames[$Index % $frames.Count]
+    $line = ('  {0}  {1}  {2}' -f $frame, (Format-Duration $Elapsed), $Text)
+    $pad = (Get-TuiWidth) - $line.Length
+    if ($pad -lt 0) { $pad = 0 }
+    Write-Host ("`r" + $line + (' ' * $pad)) -NoNewline
+}
+
+
+# ======================================================================================
 # Environment / registry helpers (user scope)
 # ======================================================================================
 function Get-CurrentUserSid {
@@ -548,7 +738,6 @@ function Invoke-Native {
         [string] $Activity
     )
 
-    $started = Get-Date
     if ($Activity) { Write-Status -Text $Activity }
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -578,19 +767,32 @@ function Invoke-Native {
     $outTask = $p.StandardOutput.ReadToEndAsync()
     $errTask = $p.StandardError.ReadToEndAsync()
 
-    if ($TimeoutSeconds -gt 0) {
-        if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
-            try { $p.Kill() } catch { }
-            Clear-ProgressBar
-            return @{ ExitCode = -1; StdOut = ''; TimedOut = $true }
+    # Wait for the process, showing a live spinner and the elapsed time.
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $spin = 0
+    $timedOut = $false
+    while (-not $p.WaitForExit(120)) {
+        if ($TimeoutSeconds -gt 0 -and $stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+            $timedOut = $true
+            break
+        }
+        if ($Activity) {
+            $spin++
+            Write-TuiSpinner -Index $spin -Elapsed $stopwatch.Elapsed.TotalSeconds -Text $Activity
         }
     }
+    if ($timedOut) {
+        try { $p.Kill() } catch { }
+        Clear-ProgressBar
+        return @{ ExitCode = -1; StdOut = ''; TimedOut = $true }
+    }
+    Clear-ProgressBar
     $p.WaitForExit()
     $text = ''
     try { $text = $outTask.Result + $errTask.Result } catch { $text = '(output unavailable)' }
 
     if ($Activity) {
-        $elapsed = ((Get-Date) - $started).TotalSeconds
+        $elapsed = $stopwatch.Elapsed.TotalSeconds
         Write-LogFileOnly ("{0} finished in {1} (exit code {2})" -f $Activity, (Format-Duration $elapsed), $p.ExitCode) 'INFO'
     }
     return @{ ExitCode = $p.ExitCode; StdOut = $text; TimedOut = $false }
@@ -770,8 +972,9 @@ function Confirm-User {
         return $true
     }
     $suffix = if ($DefaultNo) { ' [y/N]' } else { ' [Y/n]' }
+    Clear-ProgressBar
     Write-Host ''
-    Write-Host -ForegroundColor Yellow "$Prompt$suffix : " -NoNewline
+    Write-Host ("  {0} {1}{2} : " -f $script:Tui.Arrow, $Prompt, $suffix) -ForegroundColor Yellow -NoNewline
     $answer = Read-Host
     if ([string]::IsNullOrWhiteSpace($answer)) { return (-not $DefaultNo) }
     return ($answer -match '^(y|yes)$')
@@ -920,13 +1123,13 @@ function Get-FlutterCompileSdk {
 function Get-ExistingVisualStudioInstances {
     <#
         Returns the installation paths of every Visual Studio instance on the
-        machine. Always returns an array (the comma prevents PowerShell from
-        unrolling a single result into a scalar).
+        machine. Callers must wrap the result in @() so that a single instance
+        is still an array.
     #>
-    if (-not $script:VsWhereExe -or -not (Test-Path -LiteralPath $script:VsWhereExe)) { return , @() }
+    if (-not $script:VsWhereExe -or -not (Test-Path -LiteralPath $script:VsWhereExe)) { return @() }
     $r = Invoke-Native -FilePath $script:VsWhereExe -Arguments @('-products', '*', '-format', 'value', '-property', 'installationPath')
-    if ($r.ExitCode -ne 0) { return , @() }
-    return , @($r.StdOut -split "`r?`n" | Where-Object { $_ -and $_.Trim() })
+    if ($r.ExitCode -ne 0) { return @() }
+    return @($r.StdOut -split "`r?`n" | Where-Object { $_ -and $_.Trim() })
 }
 
 # ======================================================================================
@@ -1279,6 +1482,15 @@ function Confirm-AndroidSdkLicense {
     Write-Log 'NOTICE: The Android CLI prints the agreement again the first time it' 'NOTICE'
     Write-Log 'NOTICE: runs. The accepted licence is recorded in the SDK licenses folder.' 'NOTICE'
 
+    $t = $script:Tui
+    $licenceLines = @(
+        ('  {0} The Android SDK packages are covered by the Android Software' -f $t.Bullet),
+        ('  {0} Development Kit License Agreement.' -f $t.Bullet),
+        ('  {0} Using the Android SDK means you accept that agreement.' -f $t.Bullet),
+        ('  {0} Full text: {1}' -f $t.Bullet, $script:AndroidLicenseUrl)
+    )
+    Write-TuiBox -Lines $licenceLines -Title 'LICENCE' -BorderColor 'Yellow' -TextColor 'Gray'
+
     if (-not (Confirm-User 'Accept the Android SDK License Agreement on this machine?' -DefaultNo -AlwaysAsk)) {
         Write-Warn2 'The Android SDK License Agreement was not accepted.'
         Write-Detail 'The Android SDK packages were not installed and Android builds will not work.'
@@ -1452,7 +1664,7 @@ function Test-VisualStudioCppToolchain {
 function Invoke-Verification {
     param([string] $JavaHome)
 
-    Write-Step 'Verification'
+    Write-TuiSection -Title 'VERIFICATION'
 
     $env:PATH = "$script:FlutterBin;$($script:AndroidDir)\platform-tools;$($script:AndroidDir)\cmdline-tools\latest\bin;" + $env:PATH
     if ($JavaHome) {
@@ -1558,19 +1770,26 @@ function Invoke-Verification {
     }
 
     if ((Test-Path -LiteralPath $script:FlutterExe) -and (-not $SkipAndroidLicenses)) {
-        Write-Step 'Android SDK licence review (flutter doctor --android-licenses)'
+        Write-TuiSection -Title 'ANDROID LICENCES' -Detail 'flutter doctor --android-licenses'
         Write-Info 'Read the licence text shown below and answer y/n for each licence you accept.'
         Write-Detail 'Note: with Android SDK command-line tools 23.0 and newer the licence is recorded by the'
         Write-Detail 'Android CLI when it first runs, so this command may report that nothing is pending.'
         # Run in the foreground so the interactive prompt is visible immediately
         # rather than buffered until the command finishes.
+        # A native command that writes to stderr (the command-line tools print a
+        # deprecation warning there) must not become a terminating error, so the
+        # error preference is relaxed for the duration of the call.
+        $previousPreference = $ErrorActionPreference
         try {
+            $ErrorActionPreference = 'Continue'
             & $script:FlutterExe 'doctor' '--android-licenses' 2>&1 | ForEach-Object {
                 $line = "$_"
                 if ($line.Trim()) { Write-Detail $line.TrimEnd() }
             }
         } catch {
-            Write-Warn2 "flutter doctor --android-licenses could not be completed: $($_.Exception.Message)"
+            Write-Warn2 "flutter doctor --android-licences could not be completed: $($_.Exception.Message)"
+        } finally {
+            $ErrorActionPreference = $previousPreference
         }
         [void]$results.Add([pscustomobject]@{ Check = 'flutter doctor --android-licenses'; Status = 'INFO'; Detail = 'interactive' })
     }
@@ -1663,7 +1882,7 @@ function Show-Preflight {
         runnability, prerequisites and the current state of the install targets.
         Makes no network requests and changes nothing.
     #>
-    Write-Step 'Preflight'
+    Write-TuiSection -Title 'PREFLIGHT' -Detail 'read-only environment report'
 
     Write-Log 'Execution policy:'
     Write-Detail (Get-ExecutionPolicySummary)
@@ -1689,51 +1908,56 @@ function Show-Preflight {
     Write-Log ''
     Write-Log 'Prerequisites:'
     $gitCmd = Get-Command 'git.exe' -ErrorAction SilentlyContinue
-    if ($gitCmd) {
-        Write-Ok "Git for Windows ....... $($gitCmd.Source)"
-    } else {
-        Write-Warn2 'Git for Windows ....... NOT FOUND'
-        Write-Detail 'The flutter command needs it. Official download: ' + $script:GitDownloadPage
-    }
     $jdk = Get-JavaInfo
-    if ($jdk) {
-        Write-Ok "JDK ................... $($jdk.Path) (Java $($jdk.Version), via $($jdk.Source))"
+    $preRows = @()
+    if ($gitCmd) {
+        $preRows += , @('Git for Windows', "found  $($gitCmd.Source)")
     } else {
-        Write-Warn2 'JDK ................... NOT FOUND'
-        Write-Detail 'Gradle needs it to build Android apps. Official download: ' + $script:JdkDocsUrl
+        $preRows += , @('Git for Windows', 'NOT FOUND  -  ' + $script:GitDownloadPage)
+    }
+    if ($jdk) {
+        $preRows += , @('JDK', "found  Java $($jdk.Version)  $($jdk.Path)")
+    } else {
+        $preRows += , @('JDK', 'NOT FOUND  -  ' + $script:JdkDocsUrl)
     }
     $vs = @(Get-ExistingVisualStudioInstances)
     if ($vs.Count -gt 0) {
-        foreach ($v in $vs) { Write-Ok "Visual Studio .......... $v" }
+        $preRows += , @('Visual Studio', ($vs -join ', '))
     } else {
-        Write-Detail 'Visual Studio .......... none installed'
+        $preRows += , @('Visual Studio', 'none installed')
     }
+    Write-TuiBox -Lines (Format-TuiColumns -Rows $preRows) -Title 'PREREQUISITES' -BorderColor 'DarkCyan' -TextColor 'Gray'
 
     Write-Log ''
     Write-Log 'Install targets:'
-    foreach ($t in @(
+    $targetRows = @()
+    foreach ($t2 in @(
             @{ Name = 'Flutter SDK'; Path = $script:FlutterDir; Probe = 'bin\flutter.bat' },
             @{ Name = 'Android SDK'; Path = $script:AndroidDir; Probe = 'cmdline-tools\latest\bin\android.exe' },
             @{ Name = 'Visual Studio'; Path = $script:VsDir; Probe = 'Common7\IDE\devenv.exe' },
             @{ Name = 'OpenJDK (optional)'; Path = $script:JdkDir; Probe = 'bin\java.exe' },
             @{ Name = 'Git (optional)'; Path = $script:GitDir; Probe = 'cmd\git.exe' })) {
-        if (Test-Path -LiteralPath (Join-Path $t.Path $t.Probe)) {
-            Write-Detail ("{0,-20} installed  {1}" -f $t.Name, $t.Path)
+        if (Test-Path -LiteralPath (Join-Path $t2.Path $t2.Probe)) {
+            $targetRows += , @($t2.Name, "installed  $($t2.Path)")
         }
-        elseif (Test-Path -LiteralPath $t.Path) {
-            Write-Detail ("{0,-20} EXISTS but incomplete  {1}" -f $t.Name, $t.Path)
+        elseif (Test-Path -LiteralPath $t2.Path) {
+            $targetRows += , @($t2.Name, "EXISTS but incomplete  $($t2.Path)")
         }
         else {
-            Write-Detail ("{0,-20} not present  {1}" -f $t.Name, $t.Path)
+            $targetRows += , @($t2.Name, "not present  $($t2.Path)")
         }
     }
+    Write-TuiBox -Lines (Format-TuiColumns -Rows $targetRows) -Title 'INSTALL TARGETS' -BorderColor 'DarkCyan' -TextColor 'Gray'
 
     Write-Log ''
     Write-Log 'Current user environment:'
+    $envRows = @()
     foreach ($v in @('ANDROID_HOME', 'ANDROID_SDK_ROOT', 'JAVA_HOME')) {
         $val = Get-UserEnvRaw $v
-        Write-Detail ("{0,-18} {1}" -f $v, $(if ($val) { $val } else { '(not set)' }))
+        $envRows += , @($v, $(if ($val) { $val } else { '(not set)' }))
     }
+    Write-TuiBox -Lines (Format-TuiColumns -Rows $envRows) -Title 'USER ENVIRONMENT' -BorderColor 'DarkCyan' -TextColor 'Gray'
+
     $existing = Get-UserPathEntries
     $would = @(
         $script:FlutterBin,
@@ -1744,28 +1968,155 @@ function Show-Preflight {
     Write-Log 'PATH entries that would be added:'
     $seen = @{}
     foreach ($p in $existing) { $seen[$p.Trim().TrimEnd('\').ToLowerInvariant()] = $true }
+    $pathRows = @()
     foreach ($w in $would) {
         $k = $w.TrimEnd('\').ToLowerInvariant()
-        if ($seen.ContainsKey($k)) { Write-Detail ("  {0}  (already present)" -f $w) }
-        else { Write-Detail ("  {0}  (new)" -f $w) }
+        if ($seen.ContainsKey($k)) { $pathRows += , @($w, 'already present') }
+        else { $pathRows += , @($w, 'new') }
     }
+    Write-TuiBox -Lines (Format-TuiColumns -Rows $pathRows) -Title 'PATH' -BorderColor 'DarkCyan' -TextColor 'Gray'
 
-    Write-Log ''
+    Write-Host ''
     Write-Ok 'Preflight complete - nothing was changed and no download was started.'
 }
 
 function Show-Plan {
     param($PlanItems)
-    Write-Log ''
-    Write-Log '---------------- PLANNED CHANGES ----------------' 'PLAN'
-    foreach ($line in $PlanItems) { Write-Log "  $line" 'PLAN' }
-    Write-Log '-----------------------------------------------' 'PLAN'
+    Write-TuiBox -Lines $PlanItems -Title 'PLAN' -BorderColor 'DarkCyan' -TextColor 'Gray' -Wrap
+}
+
+# ======================================================================================
+# Result tracking
+#
+# Every component records what happened to it, so the final report can say
+# exactly what was done, what was already there, what failed and what is still
+# outstanding. A failing component must never abort the rest of the run.
+# ======================================================================================
+function Add-Result {
+    param(
+        [string] $Item,
+        [string] $State,      # ok | present | configured | fail | skip | pending
+        [string] $Detail = '',
+        [string] $NextAction = ''
+    )
+    [void]$script:Results.Add([pscustomobject]@{
+        Item = $Item; State = $State; Detail = $Detail; NextAction = $NextAction
+    })
+}
+
+function Invoke-ComponentStep {
+    <#
+        Runs one component install. The script block must return either a short
+        detail string, or a hashtable with State and Detail. Throwing marks the
+        component as failed and lets the run continue.
+    #>
+    param([string] $Name, [scriptblock] $Action)
+    try {
+        $result = & $Action
+        $state = 'ok'
+        $detail = 'done'
+        if ($result -is [hashtable]) {
+            if ($result.ContainsKey('State')) { $state = $result['State'] }
+            if ($result.ContainsKey('Detail')) { $detail = $result['Detail'] }
+        }
+        elseif ($result) {
+            $detail = [string]$result
+        }
+        Add-Result -Item $Name -State $state -Detail $detail
+        return $true
+    } catch {
+        $msg = $_.Exception.Message
+        Write-Err "$Name failed: $msg"
+        Add-Result -Item $Name -State 'fail' -Detail $msg `
+            -NextAction "Re-run the installer to retry this component, or install it manually. Details: $($script:LogFile)"
+        return $false
+    }
+}
+
+function Show-ResultReport {
+    <#
+        The closing report: one line per component with its state, plus any
+        outstanding actions the operator still has to take.
+    #>
+    $t = $script:Tui
+    $lines = @()
+    $outstanding = @()
+
+    foreach ($r in $script:Results) {
+        switch ($r.State) {
+            'ok'        { $m = $t.Ok;   $c = 'Green' }
+            'present'   { $m = $t.Info; $c = 'Cyan' }
+            'configured'{ $m = $t.Ok;   $c = 'Green' }
+            'fail'      { $m = $t.Fail; $c = 'Red' }
+            'skip'      { $m = $t.Skip; $c = 'DarkGray' }
+            default     { $m = $t.Warn; $c = 'Yellow' }
+        }
+        $lines += @{ Text = ('{0} {1}{2}' -f $m, $r.Item.PadRight(32), $r.Detail); Color = $c }
+        if ($r.State -eq 'fail' -or $r.State -eq 'pending' -or $r.NextAction) {
+            $outstanding += , @($r.Item, $r.NextAction)
+        }
+    }
+
+    Write-TuiSection -Title 'RESULT'
+    Write-TuiBox -Lines $lines -Title 'SUMMARY' -BorderColor 'DarkCyan' -TextColor 'Gray'
+
+    if ($outstanding.Count -gt 0) {
+        Write-Host ''
+        Write-Host '  Still outstanding:' -ForegroundColor Yellow
+        foreach ($o in $outstanding) {
+            Write-Host ("   {0} {1}" -f $t.Warn, $o[0]) -ForegroundColor Yellow
+            if ($o[1]) { Write-Host ("      {0}" -f $o[1]) -ForegroundColor DarkYellow }
+        }
+    }
+}
+
+function Show-MainMenu {
+    <#
+        The interactive front door. Lets the operator choose what to install and
+        whether the missing prerequisites should be installed as well, so
+        nothing is ever installed "silently".
+
+        Returns a hashtable with the choices. Skipped entirely when running
+        unattended (-Yes) or from a pipe.
+    #>
+    $t = $script:Tui
+    $menu = @(
+        ('  {0}  1   Install all three components' -f $t.Arrow),
+        ('  {0}  2   The Flutter SDK on its own' -f $t.Arrow),
+        ('  {0}  3   The Android SDK on its own' -f $t.Arrow),
+        ('  {0}  4   Visual Studio 2026 with the C++ workload' -f $t.Arrow),
+        ('  {0}  5   Preflight report only (change nothing)' -f $t.Arrow)
+    )
+    Write-TuiBox -Lines $menu -Title 'WHAT WOULD YOU LIKE TO INSTALL?' -BorderColor 'Cyan' -TextColor 'Gray'
+
+    $answer = Read-Host ("  Choose [1-5, default 1] : ")
+    switch -Regex ("$answer".Trim()) {
+        '^2$' { return @{ Components = @('flutter'); Preflight = $false } }
+        '^3$' { return @{ Components = @('android'); Preflight = $false } }
+        '^4$' { return @{ Components = @('vs'); Preflight = $false } }
+        '^5$' { return @{ Components = @(); Preflight = $true } }
+        default { return @{ Components = @('flutter', 'android', 'vs'); Preflight = $false } }
+    }
+}
+
+function Show-PrerequisiteMenu {
+    <#
+        Asks whether the missing prerequisites (Git for Windows, a JDK) should
+        be installed. They are never installed without this answer.
+    #>
+    $t = $script:Tui
+    $lines = @(
+        ('  {0} These are NOT part of the three components, so they are only' -f $t.Bullet),
+        ('  {0} installed if you ask for it here:' -f $t.Bullet),
+        ('    {0} Git for Windows   {1}' -f $t.Bullet, $script:GitDownloadPage),
+        ('    {0} JDK 17 or newer   {1}' -f $t.Bullet, $script:JdkDocsUrl)
+    )
+    Write-TuiBox -Lines $lines -Title 'PREREQUISITES' -BorderColor 'Yellow' -TextColor 'Gray'
+    $answer = Read-Host ("  Install the missing prerequisites? [y/N] : ")
+    return ($answer.Trim() -match '^(y|yes)$')
 }
 
 function Invoke-ElevatedRelaunch {
-    <#
-        Explicitly asks the operator before re-launching elevated. Never silent.
-    #>
     $scriptPath = $script:ScriptPath
     $psExe = (Get-Process -Id $PID).Path
 
@@ -1837,6 +2188,10 @@ if ($script:IsPiped) { Write-Log 'Mode: PIPED (remote) - running in the current 
 if ($DryRun) { Write-Log 'Mode: DRY RUN - nothing will be changed' 'TITLE' }
 if ($PreflightOnly) { Write-Log 'Mode: PREFLIGHT ONLY - nothing will be changed' 'TITLE' }
 
+Initialize-Tui
+$t = $script:Tui
+Write-TuiBanner
+
 $exitCode = 0
 try {
     # ---------------------------------------------------------------------------------
@@ -1846,7 +2201,25 @@ try {
     }
 
     # ---------------------------------------------------------------------------------
-    Write-Step 'Resolving official download sources'
+    # The interactive menu. Skipped when running unattended or from a pipe, so
+    # the one-liner and the CI paths stay fully non-interactive.
+    # ---------------------------------------------------------------------------------
+    $wantFlutter = $true
+    $wantAndroid = $true
+    $wantVs      = (-not $SkipVisualStudio)
+    if (-not $Yes -and -not $script:IsPiped) {
+        $menu = Show-MainMenu
+        if ($menu.Preflight) { Show-Preflight; return }
+        $wantFlutter = ($menu.Components -contains 'flutter')
+        $wantAndroid = ($menu.Components -contains 'android')
+        $wantVs      = ($menu.Components -contains 'vs')
+    }
+    if (-not $wantFlutter) { Write-Info 'Skipping the Flutter SDK (menu choice).' }
+    if (-not $wantAndroid) { Write-Info 'Skipping the Android SDK (menu choice).' }
+    if (-not $wantVs) { $SkipVisualStudio = $true }
+
+    # ---------------------------------------------------------------------------------
+    Write-TuiSection -Title 'RESOLVING' -Detail 'official vendor manifests'
     # ---------------------------------------------------------------------------------
     $flutterRelease = Resolve-FlutterStable
     $repoXmlPath = Join-Path $script:WorkDir 'android-repository.xml'
@@ -1866,59 +2239,73 @@ try {
     }
 
     # ---------------------------------------------------------------------------------
-    Write-Step 'Checking prerequisites'
+    Write-TuiSection -Title 'PREREQUISITES' -Detail 'Git for Windows, JDK'
     # ---------------------------------------------------------------------------------
     $gitCmd = Get-Command 'git.exe' -ErrorAction SilentlyContinue
-    if ($gitCmd) {
-        Write-Ok "Git for Windows found: $($gitCmd.Source)"
-        $gitPlan = 'use-existing'
-    } else {
-        Write-Warn2 'Git for Windows was not found.'
-        Write-Detail 'The flutter command fails with "Unable to find git in your PATH" when Git is missing.'
-        Write-Detail "Official download: $script:GitDownloadPage"
-        $gitPlan = if ($InstallPrerequisites) { 'install' } else { 'skip' }
-    }
-
     $jdk = Get-JavaInfo
-    if ($jdk) {
-        Write-Ok "JDK found (Java $($jdk.Version)) at $($jdk.Path) [via $($jdk.Source)]"
-        $jdkPlan = 'use-existing'
-    } else {
-        Write-Warn2 'No JDK (Java 17 or newer) was found.'
-        Write-Detail 'A JDK is required to BUILD Android apps: Gradle needs one. The Android SDK command-line'
-        Write-Detail 'tools carry their own runtime, so the SDK itself can still be configured without a JDK.'
-        Write-Detail "Official download: $script:JdkDocsUrl"
-        if ($InstallPrerequisites) {
-            $jdkPlan = 'standalone'
-            Write-Info "-InstallPrerequisites was given: the Microsoft Build of OpenJDK 17 will be installed at $script:JdkDir."
-        } elseif (-not $SkipVisualStudio) {
-            $jdkPlan = 'vs-component'
-            Write-Info 'The Visual Studio 2026 installer ships an official "OpenJDK (Microsoft distribution)" component.'
-            Write-Info 'It will be added to the Visual Studio installation so a JDK is available for Gradle.'
+    $missing = @()
+    if (-not $gitCmd) { $missing += 'Git for Windows' }
+    if (-not $jdk) { $missing += 'A JDK (17 or newer)' }
+
+    $gitPlan = if ($gitCmd) { 'use-existing' } else { 'skip' }
+    $jdkPlan = if ($jdk) { 'use-existing' } else { 'none' }
+
+    if ($missing.Count -gt 0) {
+        Write-Host ''
+        Write-Host ("  {0} Missing: {1}" -f $t.Warn, ($missing -join ', ')) -ForegroundColor Yellow
+        Write-Host ("  {0} They are not part of the three components, so they are only installed" -f $t.Bullet) -ForegroundColor Yellow
+        Write-Host ("  {0} if you say so below." -f $t.Bullet) -ForegroundColor Yellow
+        $prereqLines = @(
+            ('  {0} Git for Windows   {1}' -f $t.Bullet, $script:GitDownloadPage),
+            ('  {0} JDK 17 or newer   {1}' -f $t.Bullet, $script:JdkDocsUrl)
+        )
+        Write-TuiBox -Lines $prereqLines -Title 'PREREQUISITES' -BorderColor 'Yellow' -TextColor 'Gray'
+
+        $prereqOk = $InstallPrerequisites
+        if (-not $Yes -and -not $script:IsPiped) {
+            $prereqOk = Show-PrerequisiteMenu
+        }
+        if ($prereqOk) {
+            if (-not $gitCmd) { $gitPlan = 'install' }
+            if (-not $jdk) { $jdkPlan = 'standalone' }
+            Write-Info 'The missing prerequisites will be installed from their official vendor sites.'
         } else {
-            $jdkPlan = 'none'
-            Write-Warn2 'No JDK is available and the Visual Studio step is skipped, so Android builds will not work.'
-            Write-Detail 'Install a JDK 17+ and re-run this script, or re-run with -InstallPrerequisites.'
+            if (-not $jdk -and $wantVs) {
+                # The Visual Studio installer ships Microsoft's own OpenJDK build.
+                $jdkPlan = 'vs-component'
+                Write-Info 'No JDK found, so the official "OpenJDK (Microsoft distribution)" component will be added to the Visual Studio installation.'
+            }
+            Write-Warn2 'The missing prerequisites will NOT be installed from their vendor sites.'
         }
     }
 
-    if ($gitPlan -eq 'install') {
-        Write-Info "-InstallPrerequisites was given: Git for Windows will be installed at $script:GitDir."
-    } elseif ($gitPlan -eq 'skip') {
-        Write-Warn2 'Git will NOT be installed (it is not part of the three requested components).'
+    if ($gitCmd) { Write-Ok "Git for Windows found: $($gitCmd.Source)" }
+    if ($jdk) { Write-Ok "JDK found (Java $($jdk.Version)) at $($jdk.Path) [via $($jdk.Source)]" }
+    if ($gitPlan -eq 'install') { Write-Info "Git for Windows will be installed at $script:GitDir" }
+    if ($jdkPlan -eq 'standalone') { Write-Info "Microsoft Build of OpenJDK 17 will be installed at $script:JdkDir" }
+    if ($jdkPlan -eq 'none') {
+        Write-Warn2 'No JDK is available, so Android builds will not work until one is installed.'
     }
 
     # ---------------------------------------------------------------------------------
-    Write-Step 'Plan'
+    Write-TuiSection -Title 'PLAN' -Detail 'what is going to change'
     # ---------------------------------------------------------------------------------
     $planItems = New-Object System.Collections.Generic.List[string]
     $planItems.Add("Install root ............ $InstallRoot")
-    $planItems.Add("Flutter SDK ............ $($script:FlutterDir)  (stable $($flutterRelease.Version))")
-    $planItems.Add("  download ............ $($flutterRelease.Url)")
-    $planItems.Add("Android SDK ........... $($script:AndroidDir)")
-    $planItems.Add("  cmd-line tools ..... $($cmdlinePackage.Url)")
-    $planItems.Add("  packages ............ platform-tools, build-tools, platforms/android-<Flutter compileSdk>")
-    if (-not $SkipVisualStudio) {
+    if ($wantFlutter) {
+        $planItems.Add("Flutter SDK ............ $($script:FlutterDir)  (stable $($flutterRelease.Version))")
+        $planItems.Add("  download ............ $($flutterRelease.Url)")
+    } else {
+        $planItems.Add('Flutter SDK ............ SKIPPED (menu choice)')
+    }
+    if ($wantAndroid) {
+        $planItems.Add("Android SDK ........... $($script:AndroidDir)")
+        $planItems.Add("  cmd-line tools ..... $($cmdlinePackage.Url)")
+        $planItems.Add("  packages ............ platform-tools, build-tools, platforms/android-<Flutter compileSdk>")
+    } else {
+        $planItems.Add('Android SDK ........... SKIPPED (menu choice)')
+    }
+    if ($wantVs) {
         $planItems.Add("Visual Studio 2026 ..... $($script:VsDir)  (edition $VsEdition)")
         $planItems.Add("  bootstrapper ....... $vsBootstrapperUrl")
         $planItems.Add("  workload ........... $script:VsCppWorkload (Desktop development with C++)")
@@ -1928,7 +2315,7 @@ try {
         $planItems.Add('                       install under %ProgramFiles% / %ProgramFiles(x86)% - Microsoft')
         $planItems.Add('                       does not allow relocating them.')
     } else {
-        $planItems.Add('Visual Studio 2026 ..... SKIPPED (-SkipVisualStudio)')
+        $planItems.Add('Visual Studio 2026 ..... SKIPPED (menu choice or -SkipVisualStudio)')
     }
     if ($jdkPlan -eq 'standalone') { $planItems.Add("OpenJDK 17 ............ $($script:JdkDir)  (Microsoft Build of OpenJDK)") }
     if ($gitPlan -eq 'install')   { $planItems.Add("Git for Windows ....... $($script:GitDir)") }
@@ -1959,7 +2346,8 @@ try {
     }
 
     if ($DryRun) {
-        Write-Log ''
+        Write-Host ''
+        Write-Host '  DRY RUN complete - nothing was changed.' -ForegroundColor Green
         Write-Log 'DRY RUN complete - nothing was changed.' 'TITLE'
         return
     }
@@ -1970,14 +2358,15 @@ try {
     # ---------------------------------------------------------------------------------
     $installVs = (-not $SkipVisualStudio)
     if ($installVs -and -not (Test-IsElevated)) {
-        Write-Log ''
-        Write-Warn2 'Visual Studio 2026 requires administrator rights (it installs system components, MSBuild and the Windows SDK).'
+        Write-Host ''
+        Write-Host '  Visual Studio 2026 needs administrator rights.' -ForegroundColor Yellow
+        Write-Host '  It installs system components, MSBuild and the Windows SDK.' -ForegroundColor Yellow
         if ($TargetUserSid) {
             Write-Warn2 'This session is an elevated re-launch that is still not elevated; not re-launching again.'
             Write-Warn2 'Visual Studio 2026 will not be installed. Re-run the script from an elevated PowerShell window to install it.'
             $installVs = $false
         } else {
-            Write-Info 'Re-launching this script in an elevated PowerShell window re-runs the steps that are already done; they are skipped automatically.'
+            Write-Info 'Re-launching in an elevated window re-runs the steps that are already done; they are skipped automatically.'
             if (Confirm-User 'Re-launch this script elevated to install Visual Studio 2026?' -DefaultNo -AlwaysAsk) {
                 $code = Invoke-ElevatedRelaunch
                 Write-Log "The elevated run exited with code $code."
@@ -1995,124 +2384,167 @@ try {
         }
     }
 
+    # ---------------------------------------------------------------------------------
+    # Final confirmation.
+    # ---------------------------------------------------------------------------------
+    Write-Host ''
+    $confirmLines = @(
+        ('  {0} Flutter SDK ........ {1}   {2}' -f $t.Bullet, $flutterRelease.Version.PadRight(10), $script:FlutterDir),
+        ('  {0} Android SDK ....... {1}   {2}' -f $t.Bullet, ("cmdline-tools $($cmdlinePackage.Version)").PadRight(10), $script:AndroidDir),
+        ('  {0} Visual Studio ..... {1}   {2}' -f $t.Bullet, $VsEdition.PadRight(10), $(if ($installVs) { $script:VsDir } else { '(skipped)' }))
+    )
+    Write-TuiBox -Lines $confirmLines -Title 'READY TO INSTALL' -BorderColor 'Green' -TextColor 'Gray'
     if (-not (Confirm-User 'Proceed with the installation described above?' -DefaultNo)) {
+        Write-Host '  Cancelled - nothing was changed.' -ForegroundColor Yellow
         Write-Log 'Cancelled by the operator. Nothing was changed.' 'TITLE'
         return
     }
 
     # ---------------------------------------------------------------------------------
-    Write-Step 'Creating directories'
+    Write-TuiSection -Title 'Creating directories'
     # ---------------------------------------------------------------------------------
     # The Flutter directory is deliberately NOT pre-created: the SDK archive is
     # extracted into a staging folder and then moved into place, and Move-Item
     # would otherwise nest it as <root>\flutter\flutter.
-    foreach ($d in @($InstallRoot, $script:AndroidDir)) {
+    $dirs = @($InstallRoot)
+    if ($wantAndroid) { $dirs += $script:AndroidDir }
+    foreach ($d in $dirs) {
         if (-not (Test-Path -LiteralPath $d)) { New-Item -ItemType Directory -Path $d -Force | Out-Null }
     }
 
     # ---------------------------------------------------------------------------------
-    Write-Step 'Step 1/5 - Flutter SDK'
+    Write-TuiSection -Title ('STEP 1/5  ' + $t.Bullet + '  Flutter SDK') -Detail $flutterRelease.Version
     # ---------------------------------------------------------------------------------
-    try {
-        Install-Flutter -Release $flutterRelease | Out-Null
-        [void]$script:Actions.Add("Flutter SDK $($flutterRelease.Version) -> $($script:FlutterDir)")
-    } catch {
-        Write-Err "Flutter SDK installation failed: $($_.Exception.Message)"
-        throw
+    if ($wantFlutter) {
+        $null = Invoke-ComponentStep -Name 'Flutter SDK' -Action {
+            if (Test-Path -LiteralPath $script:FlutterExe) {
+                return @{ State = 'present'; Detail = "already installed at $($script:FlutterDir)" }
+            }
+            Install-Flutter -Release $flutterRelease | Out-Null
+            [void]$script:Actions.Add("Flutter SDK $($flutterRelease.Version) -> $($script:FlutterDir)")
+            return @{ State = 'ok'; Detail = "installed $($flutterRelease.Version) -> $($script:FlutterDir)" }
+        }
+    } else {
+        Add-Result -Item 'Flutter SDK' -State 'skip' -Detail 'skipped by choice'
     }
 
     # ---------------------------------------------------------------------------------
-    Write-Step 'Step 2/5 - Android SDK command-line tools'
+    Write-TuiSection -Title ('STEP 2/5  ' + $t.Bullet + '  Android SDK command-line tools') -Detail ("build $($cmdlinePackage.Version)")
     # ---------------------------------------------------------------------------------
-    try {
-        Install-AndroidCmdlineTools -Package $cmdlinePackage | Out-Null
-        [void]$script:Actions.Add("Android SDK command-line tools $($cmdlinePackage.Version) -> $($script:AndroidDir)")
-    } catch {
-        Write-Err "Android SDK command-line tools installation failed: $($_.Exception.Message)"
-        throw
+    if ($wantAndroid) {
+        $null = Invoke-ComponentStep -Name 'Android SDK tools' -Action {
+            if (Test-Path -LiteralPath $script:SdkManagerBat) {
+                return @{ State = 'present'; Detail = "already installed at $($script:AndroidDir)" }
+            }
+            Install-AndroidCmdlineTools -Package $cmdlinePackage | Out-Null
+            [void]$script:Actions.Add("Android SDK command-line tools $($cmdlinePackage.Version) -> $($script:AndroidDir)")
+            return @{ State = 'ok'; Detail = "installed cmdline-tools $($cmdlinePackage.Version) -> $($script:AndroidDir)" }
+        }
+    } else {
+        Add-Result -Item 'Android SDK tools' -State 'skip' -Detail 'skipped by choice'
     }
 
     # ---------------------------------------------------------------------------------
-    Write-Step 'Step 3/5 - Prerequisites (Git / JDK)'
+    Write-TuiSection -Title ('STEP 3/5  ' + $t.Bullet + '  Prerequisites') -Detail 'Git for Windows, JDK'
     # ---------------------------------------------------------------------------------
     if ($gitPlan -eq 'install') {
-        try {
+        $null = Invoke-ComponentStep -Name 'Git for Windows' -Action {
             $gitRelease = Resolve-GitForWindows
             Install-GitForWindows -Release $gitRelease | Out-Null
             [void]$script:Actions.Add("Git for Windows $($gitRelease.Version) -> $($script:GitDir)")
             $env:PATH = (Join-Path $script:GitDir 'cmd') + ';' + $env:PATH
-        } catch {
-            Write-Err "Git for Windows installation failed: $($_.Exception.Message)"
+            return "installed $($gitRelease.Version) -> $($script:GitDir)"
         }
+    } else {
+        Add-Result -Item 'Git for Windows' -State $(if ($gitPlan -eq 'use-existing') { 'present' } else { 'skip' }) `
+            -Detail $(if ($gitPlan -eq 'use-existing') { "found at $($gitCmd.Source)" } else { 'not installed' }) `
+            -NextAction $(if ($gitPlan -eq 'use-existing') { '' } else { "Install Git for Windows from $($script:GitDownloadPage) - the flutter command needs it." })
     }
 
     if ($jdkPlan -eq 'standalone') {
-        try {
+        $null = Invoke-ComponentStep -Name 'OpenJDK 17' -Action {
             Install-OpenJdk | Out-Null
             [void]$script:Actions.Add("Microsoft Build of OpenJDK 17 -> $($script:JdkDir)")
-        } catch {
-            Write-Err "OpenJDK installation failed: $($_.Exception.Message)"
+            return "installed -> $($script:JdkDir)"
         }
     }
 
     # ---------------------------------------------------------------------------------
-    Write-Step 'Step 4/5 - Visual Studio 2026'
+    Write-TuiSection -Title ('STEP 4/5  ' + $t.Bullet + '  Visual Studio 2026') -Detail $VsEdition
     # ---------------------------------------------------------------------------------
     if ($installVs) {
-        try {
+        $null = Invoke-ComponentStep -Name 'Visual Studio 2026' -Action {
             Install-VisualStudio -IncludeOpenJdkComponent:($jdkPlan -eq 'vs-component') | Out-Null
             [void]$script:Actions.Add("Visual Studio 2026 $VsEdition -> $($script:VsDir)")
-        } catch {
-            Write-Err "Visual Studio installation failed: $($_.Exception.Message)"
-            throw
+            return "installed $VsEdition -> $($script:VsDir)"
         }
     } else {
-        Write-Warn2 'Visual Studio 2026 was not installed in this run.'
+        Add-Result -Item 'Visual Studio 2026' -State 'skip' -Detail 'not installed in this run' `
+            -NextAction 'Re-run the script from an elevated PowerShell window to install it.'
     }
 
     # Re-resolve the JDK: the Visual Studio OpenJDK component may have supplied one.
     $jdk = Get-JavaInfo
-    if ($jdk) { Write-Ok "JDK in use: $($jdk.Path) (Java $($jdk.Version), via $($jdk.Source))" }
-
-    # ---------------------------------------------------------------------------------
-    Write-Step 'Step 5/5 - Android SDK licence and packages'
-    # ---------------------------------------------------------------------------------
-    $compileSdk = Get-FlutterCompileSdk
-    if ($compileSdk) {
-        Write-Info "Flutter declares compileSdkVersion = $compileSdk, so that Android platform will be installed."
+    if ($jdk) {
+        Write-Ok "JDK in use: $($jdk.Path) (Java $($jdk.Version), via $($jdk.Source))"
+        if ($jdkPlan -ne 'use-existing') { Add-Result -Item 'JDK' -State 'present' -Detail "Java $($jdk.Version) at $($jdk.Path)" }
     } else {
-        Write-Warn2 'Could not read compileSdkVersion from the Flutter SDK; the newest published platform will be used instead.'
+        Add-Result -Item 'JDK' -State 'pending' -Detail 'not found' `
+            -NextAction "Install a JDK 17+ from $($script:JdkDocsUrl). Gradle needs one to build Android apps."
     }
 
-    # The licence must be confirmed before the first android / sdkmanager run,
-    # because that is where the Android CLI presents and records it.
-    $licenceAccepted = $false
-    if ($SkipAndroidLicenses) {
-        Write-Warn2 'Android SDK licence acceptance was skipped (-SkipAndroidLicenses).'
-        Write-Detail 'The Android SDK packages cannot be installed without accepting the licence.'
+    # ---------------------------------------------------------------------------------
+    Write-TuiSection -Title ('STEP 5/5  ' + $t.Bullet + '  Android SDK packages') -Detail 'licence, platform-tools, build-tools, platform'
+    # ---------------------------------------------------------------------------------
+    if (-not $wantAndroid) {
+        Add-Result -Item 'Android SDK packages' -State 'skip' -Detail 'skipped by choice'
     } else {
-        $licenceAccepted = Confirm-AndroidSdkLicense
-    }
-
-    if ($licenceAccepted) {
-        try {
-            Install-AndroidPackages -PackageInfo $packageInfo -CompileSdk $compileSdk -JavaHome $(if ($jdk) { $jdk.Path } else { $null }) | Out-Null
-            [void]$script:Actions.Add("Android SDK packages -> $($script:AndroidDir)")
-            [void]$script:Actions.Add('Android SDK License Agreement accepted')
-        } catch {
-            Write-Err "Android SDK package installation failed: $($_.Exception.Message)"
-            throw
+        $compileSdk = Get-FlutterCompileSdk
+        if ($compileSdk) {
+            Write-Info "Flutter declares compileSdkVersion = $compileSdk, so that Android platform will be installed."
+        } else {
+            Write-Warn2 'Could not read compileSdkVersion from the Flutter SDK; the newest published platform will be used instead.'
         }
-        try {
-            $null = Accept-LegacyAndroidLicenses -JavaHome $(if ($jdk) { $jdk.Path } else { $null })
-        } catch {
-            Write-Err "Android SDK licence acceptance failed: $($_.Exception.Message)"
+
+        # The licence must be confirmed before the first android / sdkmanager run,
+        # because that is where the Android CLI presents and records it.
+        $licenceAccepted = $false
+        if ($SkipAndroidLicenses) {
+            Write-Warn2 'Android SDK licence acceptance was skipped (-SkipAndroidLicenses).'
+            Write-Detail 'The Android SDK packages cannot be installed without accepting the licence.'
+        } else {
+            $licenceAccepted = Confirm-AndroidSdkLicense
+        }
+
+        if ($licenceAccepted) {
+            $alreadyThere = (Test-Path -LiteralPath (Join-Path $script:AndroidDir 'platform-tools\adb.exe'))
+            $null = Invoke-ComponentStep -Name 'Android SDK packages' -Action {
+                Install-AndroidPackages -PackageInfo $packageInfo -CompileSdk $compileSdk -JavaHome $(if ($jdk) { $jdk.Path } else { $null }) | Out-Null
+                [void]$script:Actions.Add("Android SDK packages -> $($script:AndroidDir)")
+                [void]$script:Actions.Add('Android SDK License Agreement accepted')
+                if ($alreadyThere) {
+                    return @{ State = 'present'; Detail = "already installed -> $($script:AndroidDir)" }
+                }
+                return @{ State = 'ok'; Detail = "installed -> $($script:AndroidDir)" }
+            }
+            try {
+                $null = Accept-LegacyAndroidLicenses -JavaHome $(if ($jdk) { $jdk.Path } else { $null })
+            } catch {
+                Write-Err "Android SDK licence acceptance failed: $($_.Exception.Message)"
+            }
+        } else {
+            Add-Result -Item 'Android SDK packages' -State 'pending' -Detail 'licence not accepted' `
+                -NextAction "Accept the Android SDK licence at $($script:AndroidLicenseUrl) and re-run, or run: flutter doctor --android-licenses"
         }
     }
 
     # ---------------------------------------------------------------------------------
-    Write-Step 'User environment variables'
+    Write-TuiSection -Title 'ENVIRONMENT' -Detail 'user PATH, ANDROID_HOME, ANDROID_SDK_ROOT'
     # ---------------------------------------------------------------------------------
+    # This step deliberately never aborts the run: the environment must be
+    # configured even when a component install failed, otherwise a machine with
+    # a partially failed install ends up with a half-configured toolchain.
+    $envLines = @()
     $pathEntries = @(
         $script:FlutterBin,
         (Join-Path $script:AndroidDir 'platform-tools'),
@@ -2121,27 +2553,68 @@ try {
     if (Test-Path -LiteralPath (Join-Path $script:JdkDir 'bin\java.exe')) { $pathEntries += (Join-Path $script:JdkDir 'bin') }
     if (Test-Path -LiteralPath (Join-Path $script:GitDir 'cmd\git.exe')) { $pathEntries += (Join-Path $script:GitDir 'cmd') }
 
+    $envOk = $true
     foreach ($v in @(@{ N = 'ANDROID_HOME'; V = $script:AndroidDir }, @{ N = 'ANDROID_SDK_ROOT'; V = $script:AndroidDir })) {
-        $existing = Get-UserEnvRaw $v.N
-        if ($existing -and ($existing.TrimEnd('\') -ne $v.V.TrimEnd('\'))) {
-            Write-Warn2 "$($v.N) was already set to '$existing' and is being changed to '$($v.V)'."
-        }
-        Set-UserEnv $v.N $v.V
-    }
-    if ($jdkPlan -eq 'standalone') {
-        if (Get-UserEnvRaw 'JAVA_HOME') {
-            Write-Info 'JAVA_HOME is already set in your environment; it was left unchanged.'
-        } else {
-            Set-UserEnv 'JAVA_HOME' $script:JdkDir
+        try {
+            $existing = Get-UserEnvRaw $v.N
+            if ($existing -and ($existing.TrimEnd('\') -ne $v.V.TrimEnd('\'))) {
+                Write-Warn2 "$($v.N) was already set to '$existing' and is being changed to '$($v.V)'."
+            }
+            Set-UserEnv $v.N $v.V
+            $envLines += ('{0} {1} = {2}' -f $t.Ok, $v.N.PadRight(18), $v.V)
+        } catch {
+            $envOk = $false
+            $envLines += ('{0} {1} = FAILED: {2}' -f $t.Fail, $v.N, $_.Exception.Message)
         }
     }
 
-    $added = Add-UserPathEntries -Entries $pathEntries
-    if ($added.Count -gt 0) {
-        foreach ($a in $added) { Write-Ok "Added to user PATH: $a" }
-        [void]$script:Actions.Add("User PATH updated (added $($added.Count) entr$(if ($added.Count -eq 1) { 'y' } else { 'ies' }))")
+    # A machine-wide value shadows the user one in every new terminal, so it has
+    # to be called out rather than silently leaving a confusing environment.
+    foreach ($v in @('ANDROID_HOME', 'ANDROID_SDK_ROOT')) {
+        $machine = [Environment]::GetEnvironmentVariable($v, 'Machine')
+        if ($machine -and ($machine.TrimEnd('\') -ne $script:AndroidDir.TrimEnd('\'))) {
+            Write-Warn2 "A machine-wide $v is set to '$machine' and will shadow the value just set for your account."
+            Write-Detail "Remove or change the machine-wide $v (needs administrator rights) so that $v resolves to $($script:AndroidDir)."
+            Add-Result -Item "Machine-wide $v" -State 'pending' -Detail "set to '$machine'" `
+                -NextAction "Change the machine-wide $v to $($script:AndroidDir) (or remove it), otherwise it shadows the value set for your account."
+        }
+    }
+    if ($jdkPlan -eq 'standalone') {
+        try {
+            if (Get-UserEnvRaw 'JAVA_HOME') {
+                Write-Info 'JAVA_HOME is already set in your environment; it was left unchanged.'
+                $envLines += ('{0} {1} = (unchanged)' -f $t.Info, 'JAVA_HOME'.PadRight(18))
+            } else {
+                Set-UserEnv 'JAVA_HOME' $script:JdkDir
+                $envLines += ('{0} {1} = {2}' -f $t.Ok, 'JAVA_HOME'.PadRight(18), $script:JdkDir)
+            }
+        } catch {
+            $envOk = $false
+            $envLines += ('{0} {1} = FAILED: {2}' -f $t.Fail, 'JAVA_HOME', $_.Exception.Message)
+        }
+    }
+
+    try {
+        $added = Add-UserPathEntries -Entries $pathEntries
+        if ($added.Count -gt 0) {
+            foreach ($a in $added) { Write-Ok "Added to user PATH: $a" }
+            [void]$script:Actions.Add("User PATH updated (added $($added.Count) entr$(if ($added.Count -eq 1) { 'y' } else { 'ies' }))")
+            $envLines += ('{0} {1} = {2} entr{3} added' -f $t.Ok, 'PATH'.PadRight(18), $added.Count, $(if ($added.Count -eq 1) { 'y' } else { 'ies' }))
+        } else {
+            Write-Ok 'The user PATH already contains all required entries; nothing was changed.'
+            $envLines += ('{0} {1} = already up to date' -f $t.Info, 'PATH'.PadRight(18))
+        }
+    } catch {
+        $envOk = $false
+        $envLines += ('{0} {1} = FAILED: {2}' -f $t.Fail, 'PATH', $_.Exception.Message)
+    }
+    Write-TuiBox -Lines $envLines -Title 'USER ENVIRONMENT' -BorderColor 'DarkCyan' -TextColor 'Gray'
+
+    if ($envOk) {
+        Add-Result -Item 'User environment' -State 'configured' -Detail 'PATH, ANDROID_HOME, ANDROID_SDK_ROOT set'
     } else {
-        Write-Ok 'The user PATH already contains all required entries; nothing was changed.'
+        Add-Result -Item 'User environment' -State 'fail' -Detail 'one or more variables could not be set' `
+            -NextAction 'Set them manually: ANDROID_HOME and ANDROID_SDK_ROOT to the Android SDK folder, and add the Flutter and platform-tools folders to your user PATH.'
     }
 
     if (Test-Path -LiteralPath $script:FlutterExe) {
@@ -2164,28 +2637,22 @@ try {
     }
 
     # ---------------------------------------------------------------------------------
-    Write-Step 'Summary'
+    Show-ResultReport
     # ---------------------------------------------------------------------------------
-    Write-Log 'Completed actions:'
-    if ($script:Actions.Count -eq 0) { Write-Detail '(none)' }
-    foreach ($a in $script:Actions) { Write-Detail $a }
-
     if ($script:Warnings.Count -gt 0) {
-        Write-Log ''
-        Write-Log 'Warnings / remaining actions:'
-        foreach ($w in $script:Warnings) { Write-Detail $w }
+        Write-Host ''
+        Write-Host '  Warnings:' -ForegroundColor Yellow
+        foreach ($w in $script:Warnings) { Write-Host ("   {0} {1}" -f $t.Warn, $w) -ForegroundColor DarkYellow }
     }
     if ($script:Failures.Count -gt 0) {
-        Write-Log ''
-        Write-Log 'Failures:'
-        foreach ($f in $script:Failures) { Write-Detail $f }
         $exitCode = 1
     } else {
-        Write-Log ''
-        Write-Ok 'All requested components were installed and verified.'
+        Write-Host ''
+        Write-Host '  All requested components were installed and verified.' -ForegroundColor Green
     }
 
-    Write-Log ''
+    Write-Host ''
+    Write-Host '  Open a NEW terminal before using flutter / adb so the updated PATH is picked up.' -ForegroundColor Cyan
     Write-Log 'Open a NEW terminal before using flutter / adb so the updated PATH is picked up.' 'INFO'
 }
 catch {

@@ -96,6 +96,70 @@ Open a **new** terminal when you are done, so the updated `PATH` is picked up.
 
 ---
 
+## What it looks like
+
+The installer is a small console application. It draws a banner, framed
+section headers, boxed panels and a closing report, and it falls back to plain
+ASCII when the console cannot render box-drawing characters.
+
+```
++==================================================================================================+
+|                                                                                                  |
+|   flutstaller   *   Flutter development environment for Windows                                  |
+|   Flutter SDK   *   Android SDK (command-line tools)   *   Visual Studio 2026 (C++)              |
+|                                                                                                  |
++==================================================================================================+
+
++- WHAT WOULD YOU LIKE TO INSTALL? ---------------------------------------------------------------+
+|   ->  1   Install all three components                                                           |
+|   ->  2   The Flutter SDK on its own                                                             |
+|   ->  3   The Android SDK on its own                                                             |
+|   ->  4   Visual Studio 2026 with the C++ workload                                               |
+|   ->  5   Preflight report only (change nothing)                                                 |
++--------------------------------------------------------------------------------------------------+
+```
+
+Downloads show a live progress bar with the phase status, the percentage, the
+transferred and total size, the current throughput and the ETA:
+
+```
+Downloading  flutter_windows_3.47.7-sta...  [###########------------------]   37.4%  412.3 MB / 1.10 GB  25.0 MB/s  ETA 00:27
+```
+
+Long-running steps (the Visual Studio installer, the Android CLI, `flutter
+doctor -v`) show a spinner and the elapsed time.
+
+The run ends with a report that says exactly what happened to every component
+and what is still outstanding:
+
+```
++- SUMMARY ---------------------------------------------------------------------------------------+
+| [i] Flutter SDK                     already installed at C:\development\flutter                  |
+| [i] Android SDK tools               already installed at C:\development\Android\Sdk              |
+| [i] Git for Windows                 found at C:\Program Files\Git\mingw64\bin\git.exe            |
+| [.] Visual Studio 2026              not installed in this run                                    |
+| [+] Android SDK packages            installed -> C:\development\Android\Sdk                      |
+| [!] Machine-wide ANDROID_HOME       set to 'C:\Android'                                          |
+| [+] User environment                PATH, ANDROID_HOME, ANDROID_SDK_ROOT set                     |
++--------------------------------------------------------------------------------------------------+
+
+  Still outstanding:
+   [!] Visual Studio 2026
+      Re-run the script from an elevated PowerShell window to install it.
+   [!] Machine-wide ANDROID_HOME
+      Change the machine-wide ANDROID_HOME to C:\development\Android\Sdk (or remove it), otherwise it
+      shadows the value set for your account.
+```
+
+### A failing component never stops the rest
+
+Each component is installed in isolation. If one fails, the run **continues**:
+the environment is still configured, the remaining components are still
+installed, and the failure is reported with a next action in the summary. The
+exit code is non-zero so automation can react.
+
+---
+
 ## Prerequisites
 
 Two things the three components depend on but do not contain. The script
@@ -109,16 +173,22 @@ Two things the three components depend on but do not contain. The script
 Three ways to satisfy them — pick one:
 
 1. **Already installed** — the script finds and uses the existing copy.
-2. **`-InstallPrerequisites`** (or `FLUTSTALLER_INSTALL_PREREQUISITES=1`) —
-   installs the official *Git for Windows* and *Microsoft Build of OpenJDK 17*
-   under `C:\development\Git` and `C:\development\jdk`, adds them to your
-   `PATH`, and points Flutter at the JDK.
-3. **The Visual Studio OpenJDK component** — if no JDK is found, the script adds
-   Microsoft's official `Component.OpenJDK` to the Visual Studio installation.
-   This keeps everything inside the three requested components.
+2. **Answer yes at the prompt** — the installer shows a *Prerequisites* panel
+   and asks whether the missing ones should be installed from their official
+   vendor sites. Nothing is installed without that answer.
+3. **`-InstallPrerequisites`** (or `FLUTSTALLER_INSTALL_PREREQUISITES=1`) — the
+   same thing without the prompt, for unattended runs.
+
+Either way it installs the official *Git for Windows* and *Microsoft Build of
+OpenJDK 17* under `C:\development\Git` and `C:\development\jdk`, adds them to
+your `PATH`, and points Flutter at the JDK.
+
+There is a third option for the JDK: if none is found, the script adds
+Microsoft's official `Component.OpenJDK` to the Visual Studio installation,
+which keeps everything inside the three requested components.
 
 If you would rather not install them, the script finishes the rest of the work
-and lists them as remaining actions in the final report.
+and lists them as outstanding actions in the final report.
 
 ---
 
