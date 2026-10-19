@@ -6,7 +6,7 @@ Visual Studio 2026 with the C++ toolchain — all under one directory, from the
 vendors' own official sources.
 
 ```powershell
-irm https://raw.githubusercontent.com/OWNER/REPO/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/kernelk14/flutstaller/main/install.ps1 | iex
 ```
 
 That is the whole thing. It resolves the current stable versions from the
@@ -16,7 +16,7 @@ tells you exactly what it did and what (if anything) is still missing.
 
 > **Prefer to see what you are running?** Download and read it first:
 > ```powershell
-> irm https://raw.githubusercontent.com/OWNER/REPO/main/install.ps1 -OutFile install.ps1
+> irm https://raw.githubusercontent.com/kernelk14/flutstaller/main/install.ps1 -OutFile install.ps1
 > notepad install.ps1
 > .\install.ps1
 > ```
@@ -63,13 +63,13 @@ you did not ask for. Git and a JDK are external prerequisites — they are
 ### One line, from a URL
 
 ```powershell
-irm https://raw.githubusercontent.com/OWNER/REPO/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/kernelk14/flutstaller/main/install.ps1 | iex
 ```
 
 ### From a clone
 
 ```powershell
-git clone https://github.com/OWNER/REPO.git
+git clone https://github.com/kernelk14/flutstaller.git
 cd REPO
 
 .\install.ps1 -PreflightOnly   # read-only environment report
@@ -159,7 +159,7 @@ variable, and an environment variable always wins over the built-in default.
 ```powershell
 $env:FLUTSTALLER_INSTALL_ROOT = 'D:\dev'
 $env:FLUTSTALLER_DRY_RUN = '1'
-irm https://raw.githubusercontent.com/OWNER/REPO/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/kernelk14/flutstaller/main/install.ps1 | iex
 ```
 
 ---
@@ -180,7 +180,7 @@ there is no file on disk:
 You can also pass parameters by turning the download into a script block:
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/OWNER/REPO/main/install.ps1))) -InstallRoot 'D:\dev' -DryRun
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/kernelk14/flutstaller/main/install.ps1))) -InstallRoot 'D:\dev' -DryRun
 ```
 
 **A word of caution.** `irm ... | iex` executes whatever the server returns at

@@ -82,7 +82,7 @@ server returns at that moment, without showing you the code first. If you
 prefer to see what you are running, download and read it first:
 
 ```powershell
-irm https://raw.githubusercontent.com/OWNER/REPO/main/install.ps1 -OutFile install.ps1
+irm https://raw.githubusercontent.com/kernelk14/flutstaller/main/install.ps1 -OutFile install.ps1
 notepad install.ps1
 .\install.ps1
 ```
@@ -97,7 +97,7 @@ For a reproducible or audited install, pin the script to a commit and verify
 it yourself:
 
 ```powershell
-irm https://raw.githubusercontent.com/OWNER/REPO/<COMMIT>/install.ps1 -OutFile install.ps1
+irm https://raw.githubusercontent.com/kernelk14/flutstaller/<COMMIT>/install.ps1 -OutFile install.ps1
 Get-FileHash install.ps1 -Algorithm SHA256
 ```
 

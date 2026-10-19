@@ -169,7 +169,7 @@ $SkipVerification       = Resolve-EnvFlag  -Value ([bool]$SkipVerification) -Def
 # The canonical script URL, used only when the script has to re-launch itself
 # in an elevated window while running from a pipe.
 $script:SourceUrl = [Environment]::GetEnvironmentVariable('FLUTSTALLER_SOURCE_URL')
-if ([string]::IsNullOrWhiteSpace($script:SourceUrl)) { $script:SourceUrl = $null }
+if ([string]::IsNullOrWhiteSpace($script:SourceUrl)) { $script:SourceUrl = 'https://raw.githubusercontent.com/kernelk14/flutstaller/main/install.ps1' }
 
 if ($VsEdition -notin @('Community', 'Professional', 'Enterprise')) {
     throw "FLUTSTALLER_VS_EDITION must be Community, Professional or Enterprise (got '$VsEdition')."
@@ -200,7 +200,7 @@ $script:AndroidLicenseUrl  = 'https://developer.android.com/studio/terms'
 # The canonical location of this script. It is only needed when the script runs
 # from a pipe and has to re-launch itself in an elevated window. Override it
 # with the FLUTSTALLER_SOURCE_URL environment variable for a fork.
-$script:SourceUrl = $null
+$script:SourceUrl = 'https://raw.githubusercontent.com/kernelk14/flutstaller/main/install.ps1'
 
 # Workload / component IDs for "Desktop development with C++" (Visual Studio 2026).
 $script:VsCppWorkload     = 'Microsoft.VisualStudio.Workload.NativeDesktop'

@@ -5,7 +5,7 @@ Thanks for taking the time to improve this project.
 ## Getting set up
 
 ```powershell
-git clone https://github.com/OWNER/REPO.git
+git clone https://github.com/kernelk14/flutstaller.git
 cd REPO
 ```
 
