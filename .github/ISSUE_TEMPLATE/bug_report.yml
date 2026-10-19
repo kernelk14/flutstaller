@@ -1,0 +1,82 @@
+name: Bug report
+description: Something in the setup script does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. The most useful thing you can attach is the
+        log file from `logs/` — it records every resolved URL, every checksum
+        and every verification result.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you see, and what did you expect instead?
+      placeholder: The script stopped after "..." and printed "..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: The exact command you ran
+      description: For example `.\install.ps1 -DryRun` or the `irm ... | iex` one-liner.
+      render: powershell
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Log output
+      description: Paste the relevant part of `logs\flutter-setup-*.log`.
+      render: shell
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 23H2
+    validations:
+      required: true
+
+  - type: input
+    id: powershell
+    attributes:
+      label: PowerShell version
+      description: The output of `$PSVersionTable.PSVersion`
+      placeholder: 5.1.19041.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: How were you running it
+      options:
+        - Local file (.\install.ps1)
+        - run-setup.cmd
+        - Remote (irm ... | iex)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: prereqs
+    attributes:
+      label: Prerequisites on your machine
+      description: Run `.\install.ps1 -PreflightOnly` and paste the result.
+      render: shell

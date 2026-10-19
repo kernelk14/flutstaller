@@ -1,0 +1,37 @@
+name: Feature request
+description: Suggest an improvement to the setup script
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the situation you are in, not the solution you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like the script to do?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Which of the three components does this affect?
+      options:
+        - Flutter SDK
+        - Android SDK
+        - Visual Studio
+        - Environment / PATH
+        - The script itself (behaviour, output, safety)
+        - Not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered

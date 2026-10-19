@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Static analysis
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -ErrorAction Stop
+          $m = Get-Module -ListAvailable PSScriptAnalyzer | Sort-Object Version -Descending | Select-Object -First 1
+          "PSScriptAnalyzer $($m.Version)"
+
+      - name: Parse check (Windows PowerShell 5.1 compatible)
+        shell: powershell
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path .\install.ps1), [ref]$null, [ref]$errors)
+          if ($errors -and $errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Host "line $($_.Extent.StartLineNumber): $($_.Message)" }
+            exit 1
+          }
+          "parse ok"
+
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path ./install.ps1 -Settings ./PSScriptAnalyzerSettings.psd1
+          if ($results) {
+            $results | Format-Table -AutoSize | Out-String | Write-Host
+            exit 1
+          }
+          "no analyzer findings"
+
+  preflight:
+    name: Preflight smoke test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Environment report (read-only)
+        shell: pwsh
+        run: ./install.ps1 -PreflightOnly
+
+  dryrun:
+    name: Dry run against the live vendor manifests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve versions and print the plan
+        shell: pwsh
+        run: ./install.ps1 -DryRun
+
+  pipe:
+    name: Remote execution (irm | iex) path
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pipe the script into Invoke-Expression
+        shell: pwsh
+        run: |
+          # The script must behave when there is no file on disk:
+          # it must not close the session and it must restore StrictMode.
+          function Get-StrictModeState {
+            try { $x = $null.Count; return 'Off' } catch { return 'On' }
+          }
+          $before = Get-StrictModeState
+          "strict mode before : $before"
+
+          $env:FLUTSTALLER_PREFLIGHT_ONLY = '1'
+          $env:FLUTSTALLER_INSTALL_ROOT = "$env:RUNNER_TEMP\dev"
+
+          Get-Content ./install.ps1 -Raw | Invoke-Expression
+
+          "the session survived the piped script"
+          $after = Get-StrictModeState
+          "strict mode after  : $after"
+          if ($before -ne $after) { throw "StrictMode was not restored (was $before, now $after)" }
+          if ($env:FLUTSTALLER_INSTALL_ROOT -ne "$env:RUNNER_TEMP\dev") { throw 'FLUTSTALLER_INSTALL_ROOT was not honoured' }
+
+  launcher:
+    name: Launcher policy pre-flight
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: run-setup.cmd pre-flight only
+        shell: cmd
+        run: |
+          rem The launcher must not change the execution policy.
+          call run-setup.cmd -PreflightOnly
+          if errorlevel 1 exit /b 1

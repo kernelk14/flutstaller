@@ -1,0 +1,25 @@
+# Logs written by the setup script
+logs/
+*.log
+
+# Downloaded installers / archives
+*.zip
+*.exe
+*.msi
+*.part
+
+# Visual Studio / Android tooling artefacts
+.vs/
+.gradle/
+local.properties
+
+# Editor and OS noise
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# PowerShell artefacts
+*.ps1xml
