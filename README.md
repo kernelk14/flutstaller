@@ -466,11 +466,11 @@ is listed in [How it works](#how-it-works).
 serves it can briefly lag behind a push. Use a tag or a commit instead:
 
 ```powershell
-irm https://raw.githubusercontent.com/kernelk14/flutstaller/v0.1.0/install.ps1 | iex
+irm https://raw.githubusercontent.com/kernelk14/flutstaller/v0.2.0/install.ps1 | iex
 ```
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kernelk14/flutstaller/v0.1.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kernelk14/flutstaller/v0.2.0/install.sh | bash
 ```
 
 ---
