@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.0] - 2026-10-20
+
+The first release. One installer per platform, the same behaviour on all of
+them.
+
 ### Added
 
 - **A Linux and macOS installer** — `install.sh`, a POSIX-ish bash script that
@@ -109,15 +116,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Android package list is de-duplicated, so the compile SDK is not
   requested twice when it is also the newest published platform.
 
-## [0.1.0] - Initial release
+### What it installs
 
-- Flutter SDK (current stable) installed to `C:\development\flutter`, with the
-  published SHA-256 verified.
-- Android SDK command-line tools installed to `C:\development\Android\Sdk`,
-  with the published SHA-1 verified, plus platform-tools, build-tools and the
-  Android platform required by Flutter.
-- Visual Studio 2026 with the *Desktop development with C++* workload installed
-  to `C:\development\VisualStudio`.
-- User `PATH`, `ANDROID_HOME` and `ANDROID_SDK_ROOT` updated without
+- The **Flutter SDK** (current stable), with the published SHA-256 verified.
+- The **Android SDK command-line tools** and the platform-tools, build-tools
+  and Android platform that Flutter requires, with the published SHA-1
+  verified.
+- The **platform toolchain**: Visual Studio 2026 with the *Desktop development
+  with C++* workload on Windows, the Flutter Linux desktop packages on Linux,
+  and Xcode on macOS.
+- The user `PATH`, `ANDROID_HOME` and `ANDROID_SDK_ROOT`, updated without
   duplicates and without touching unrelated variables.
-- `-DryRun` mode, structured logging, and post-install verification.
