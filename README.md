@@ -37,7 +37,7 @@ platform toolchain, installed from the vendors' own official sources.
 - [Re-running it](#re-running-it) — it is safe to run again
 - [Troubleshooting](#troubleshooting)
 - [About this project](#about-this-project) — the AI disclosure in full
-- [Contributing](#contributing) · [Security](#security) · [License](#license)
+- [Contributing](#contributing) — [Security](#security) — [License](#license)
 
 ---
 
