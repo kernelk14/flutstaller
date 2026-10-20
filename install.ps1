@@ -252,7 +252,7 @@ $script:Actions       = New-Object System.Collections.Generic.List[string]
 # ======================================================================================
 # Logging
 # ======================================================================================
-function Write-Log {
+function Write-RunLog {
     param([string] $Message, [string] $Level = 'INFO')
     Clear-ProgressBar
     $line = '{0} [{1,-5}] {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level, $Message
@@ -262,20 +262,20 @@ function Write-Log {
     }
 }
 
-function Write-Step   { param([string] $Message) Write-Log ''; Write-Log "=== $Message ===" 'STEP' }
-function Write-Info   { param([string] $Message) Write-Log $Message 'INFO' }
-function Write-Ok     { param([string] $Message) Write-Log $Message 'OK' }
-function Write-Detail { param([string] $Message) Write-Log "    $Message" 'DETL' }
+function Write-Step   { param([string] $Message) Write-RunLog ''; Write-RunLog "=== $Message ===" 'STEP' }
+function Write-Info   { param([string] $Message) Write-RunLog $Message 'INFO' }
+function Write-Ok     { param([string] $Message) Write-RunLog $Message 'OK' }
+function Write-Detail { param([string] $Message) Write-RunLog "    $Message" 'DETL' }
 
 function Write-Warn2 {
     param([string] $Message)
-    Write-Log $Message 'WARN'
+    Write-RunLog $Message 'WARN'
     $script:Warnings.Add($Message) | Out-Null
 }
 
 function Write-Err {
     param([string] $Message)
-    Write-Log $Message 'ERROR'
+    Write-RunLog $Message 'ERROR'
     $script:Failures.Add($Message) | Out-Null
 }
 
@@ -1490,13 +1490,13 @@ function Confirm-AndroidSdkLicense {
         This must run BEFORE the first android / sdkmanager invocation, because
         that is the point at which the licence is presented and accepted.
     #>
-    Write-Log ''
-    Write-Log 'NOTICE: The Android SDK is distributed under the Android Software' 'NOTICE'
-    Write-Log 'NOTICE: Development Kit License Agreement. Using the Android SDK' 'NOTICE'
-    Write-Log 'NOTICE: means you accept that agreement. The full text is published' 'NOTICE'
-    Write-Log "NOTICE: at $script:AndroidLicenseUrl" 'NOTICE'
-    Write-Log 'NOTICE: The Android CLI prints the agreement again the first time it' 'NOTICE'
-    Write-Log 'NOTICE: runs. The accepted licence is recorded in the SDK licenses folder.' 'NOTICE'
+    Write-RunLog ''
+    Write-RunLog 'NOTICE: The Android SDK is distributed under the Android Software' 'NOTICE'
+    Write-RunLog 'NOTICE: Development Kit License Agreement. Using the Android SDK' 'NOTICE'
+    Write-RunLog 'NOTICE: means you accept that agreement. The full text is published' 'NOTICE'
+    Write-RunLog "NOTICE: at $script:AndroidLicenseUrl" 'NOTICE'
+    Write-RunLog 'NOTICE: The Android CLI prints the agreement again the first time it' 'NOTICE'
+    Write-RunLog 'NOTICE: runs. The accepted licence is recorded in the SDK licenses folder.' 'NOTICE'
 
     $t = $script:Tui
     $licenceLines = @(
@@ -1810,8 +1810,8 @@ function Invoke-Verification {
         [void]$results.Add([pscustomobject]@{ Check = 'flutter doctor --android-licenses'; Status = 'INFO'; Detail = 'interactive' })
     }
 
-    Write-Log ''
-    Write-Log 'Check results:'
+    Write-RunLog ''
+    Write-RunLog 'Check results:'
     foreach ($c in $results) {
         $marker = switch ($c.Status) { 'PASS' { '[ OK ]' } 'FAIL' { '[FAIL]' } default { '[INFO]' } }
         Write-Detail "$marker $($c.Check) $($c.Detail)"
@@ -1900,11 +1900,11 @@ function Show-Preflight {
     #>
     Write-TuiSection -Title 'PREFLIGHT' -Detail 'read-only environment report'
 
-    Write-Log 'Execution policy:'
+    Write-RunLog 'Execution policy:'
     Write-Detail (Get-ExecutionPolicySummary)
 
     $run = Get-ScriptRunnability
-    Write-Log 'Script runnability:'
+    Write-RunLog 'Script runnability:'
     if ($script:IsPiped) {
         Write-Detail 'script ................. (running from a pipe - no script file on disk)'
         Write-Detail "source URL ............ $(if ($script:SourceUrl) { $script:SourceUrl } else { '(not configured)' })"
@@ -1921,8 +1921,8 @@ function Show-Preflight {
         Write-Detail 'or:   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force'
     }
 
-    Write-Log ''
-    Write-Log 'Prerequisites:'
+    Write-RunLog ''
+    Write-RunLog 'Prerequisites:'
     $gitCmd = Get-Command 'git.exe' -ErrorAction SilentlyContinue
     $jdk = Get-JavaInfo
     $preRows = @()
@@ -1944,8 +1944,8 @@ function Show-Preflight {
     }
     Write-TuiBox -Lines (Format-TuiColumns -Rows $preRows) -Title 'PREREQUISITES' -BorderColor 'DarkCyan' -TextColor 'Gray'
 
-    Write-Log ''
-    Write-Log 'Install targets:'
+    Write-RunLog ''
+    Write-RunLog 'Install targets:'
     $targetRows = @()
     foreach ($t2 in @(
             @{ Name = 'Flutter SDK'; Path = $script:FlutterDir; Probe = 'bin\flutter.bat' },
@@ -1965,8 +1965,8 @@ function Show-Preflight {
     }
     Write-TuiBox -Lines (Format-TuiColumns -Rows $targetRows) -Title 'INSTALL TARGETS' -BorderColor 'DarkCyan' -TextColor 'Gray'
 
-    Write-Log ''
-    Write-Log 'Current user environment:'
+    Write-RunLog ''
+    Write-RunLog 'Current user environment:'
     $envRows = @()
     foreach ($v in @('ANDROID_HOME', 'ANDROID_SDK_ROOT', 'JAVA_HOME')) {
         $val = Get-UserEnvRaw $v
@@ -1980,8 +1980,8 @@ function Show-Preflight {
         (Join-Path $script:AndroidDir 'platform-tools'),
         (Join-Path $script:AndroidDir 'cmdline-tools\latest\bin')
     )
-    Write-Log ''
-    Write-Log 'PATH entries that would be added:'
+    Write-RunLog ''
+    Write-RunLog 'PATH entries that would be added:'
     $seen = @{}
     foreach ($p in $existing) { $seen[$p.Trim().TrimEnd('\').ToLowerInvariant()] = $true }
     $pathRows = @()
@@ -2161,10 +2161,10 @@ function Invoke-ElevatedRelaunch {
     if ($LogDirectory) { $argList += @('-LogDirectory', ('"' + $LogDirectory + '"')) }
     if ($script:CurrentUserSid) { $argList += @('-TargetUserSid', $script:CurrentUserSid) }
 
-    Write-Log ''
+    Write-RunLog ''
     Write-Info 'Starting an elevated PowerShell window...'
     $p = Start-Process -FilePath $psExe -Verb RunAs -ArgumentList $argList -PassThru -Wait
-    Write-Log "The elevated run finished with exit code $($p.ExitCode)."
+    Write-RunLog "The elevated run finished with exit code $($p.ExitCode)."
     return $p.ExitCode
 }
 
@@ -2193,17 +2193,17 @@ try {
 $script:WorkDir = Join-Path ([System.IO.Path]::GetTempPath()) ("flutstaller-{0}-{1}" -f $env:USERNAME, (Get-Date -Format 'yyyyMMddHHmmss'))
 New-Item -ItemType Directory -Path $script:WorkDir -Force | Out-Null
 
-Write-Log 'Flutter development environment setup' 'TITLE'
-Write-Log "This script was written by an AI (OpenCode). Please read the source before running it." 'TITLE'
-Write-Log "Log file: $($script:LogFile)"
-Write-Log "Install root: $InstallRoot"
-Write-Log "PowerShell: $($PSVersionTable.PSVersion) on $env:COMPUTERNAME"
-Write-Log "Running as: $env:USERDOMAIN\$env:USERNAME (SID $($script:CurrentUserSid))"
-Write-Log "Elevated: $(Test-IsElevated)"
-Write-Log "Execution policy: $(Get-ExecutionPolicySummary)"
-if ($script:IsPiped) { Write-Log 'Mode: PIPED (remote) - running in the current PowerShell session' 'TITLE' }
-if ($DryRun) { Write-Log 'Mode: DRY RUN - nothing will be changed' 'TITLE' }
-if ($PreflightOnly) { Write-Log 'Mode: PREFLIGHT ONLY - nothing will be changed' 'TITLE' }
+Write-RunLog 'Flutter development environment setup' 'TITLE'
+Write-RunLog "This script was written by an AI (OpenCode). Please read the source before running it." 'TITLE'
+Write-RunLog "Log file: $($script:LogFile)"
+Write-RunLog "Install root: $InstallRoot"
+Write-RunLog "PowerShell: $($PSVersionTable.PSVersion) on $env:COMPUTERNAME"
+Write-RunLog "Running as: $env:USERDOMAIN\$env:USERNAME (SID $($script:CurrentUserSid))"
+Write-RunLog "Elevated: $(Test-IsElevated)"
+Write-RunLog "Execution policy: $(Get-ExecutionPolicySummary)"
+if ($script:IsPiped) { Write-RunLog 'Mode: PIPED (remote) - running in the current PowerShell session' 'TITLE' }
+if ($DryRun) { Write-RunLog 'Mode: DRY RUN - nothing will be changed' 'TITLE' }
+if ($PreflightOnly) { Write-RunLog 'Mode: PREFLIGHT ONLY - nothing will be changed' 'TITLE' }
 
 Initialize-Tui
 $t = $script:Tui
@@ -2365,7 +2365,7 @@ try {
     if ($DryRun) {
         Write-Host ''
         Write-Host '  DRY RUN complete - nothing was changed.' -ForegroundColor Green
-        Write-Log 'DRY RUN complete - nothing was changed.' 'TITLE'
+        Write-RunLog 'DRY RUN complete - nothing was changed.' 'TITLE'
         return
     }
 
@@ -2386,7 +2386,7 @@ try {
             Write-Info 'Re-launching in an elevated window re-runs the steps that are already done; they are skipped automatically.'
             if (Confirm-User 'Re-launch this script elevated to install Visual Studio 2026?' -DefaultNo -AlwaysAsk) {
                 $code = Invoke-ElevatedRelaunch
-                Write-Log "The elevated run exited with code $code."
+                Write-RunLog "The elevated run exited with code $code."
                 $exitCode = $code
                 $script:PipeExitCode = $code
                 return
@@ -2413,7 +2413,7 @@ try {
     Write-TuiBox -Lines $confirmLines -Title 'READY TO INSTALL' -BorderColor 'Green' -TextColor 'Gray'
     if (-not (Confirm-User 'Proceed with the installation described above?' -DefaultNo)) {
         Write-Host '  Cancelled - nothing was changed.' -ForegroundColor Yellow
-        Write-Log 'Cancelled by the operator. Nothing was changed.' 'TITLE'
+        Write-RunLog 'Cancelled by the operator. Nothing was changed.' 'TITLE'
         return
     }
 
@@ -2670,13 +2670,13 @@ try {
 
     Write-Host ''
     Write-Host '  Open a NEW terminal before using flutter / adb so the updated PATH is picked up.' -ForegroundColor Cyan
-    Write-Log 'Open a NEW terminal before using flutter / adb so the updated PATH is picked up.' 'INFO'
+    Write-RunLog 'Open a NEW terminal before using flutter / adb so the updated PATH is picked up.' 'INFO'
 }
 catch {
-    Write-Log ''
+    Write-RunLog ''
     Write-Err "FAILED: $($_.Exception.Message)"
-    Write-Log "Exception detail: $($_.Exception.GetType().FullName) at $($_.InvocationInfo.PositionMessage)" 'ERROR'
-    Write-Log "Log file: $($script:LogFile)"
+    Write-RunLog "Exception detail: $($_.Exception.GetType().FullName) at $($_.InvocationInfo.PositionMessage)" 'ERROR'
+    Write-RunLog "Log file: $($script:LogFile)"
     $exitCode = 1
     $script:PipeExitCode = 1
     if ($script:IsPiped) {

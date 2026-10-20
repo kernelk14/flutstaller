@@ -120,12 +120,14 @@ jobs:
       - name: ShellCheck
         shell: bash
         run: |
-          if command -v shellcheck >/dev/null 2>&1; then
-            shellcheck -S warning install.sh
-          else
-            sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-            shellcheck -S warning install.sh
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            if command -v brew >/dev/null 2>&1; then
+              brew install shellcheck
+            else
+              sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+            fi
           fi
+          shellcheck -S warning install.sh
 
       - name: Preflight (read-only)
         shell: bash
