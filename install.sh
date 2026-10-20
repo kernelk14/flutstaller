@@ -3,7 +3,7 @@
 #  flutstaller - Flutter development environment setup for Linux and macOS
 #
 #  Installs exactly three components, all underneath a single install root
-#  (default $HOME/development):
+#  (default $HOME/.bin/development):
 #
 #    1. Flutter SDK (current stable)          -> <root>/flutter
 #    2. Android SDK command-line tools only   -> <root>/Android/Sdk
@@ -38,7 +38,7 @@ ANDROID_LICENSE_URL="https://developer.android.com/studio/terms"
 # -----------------------------------------------------------------------------
 # Defaults
 # -----------------------------------------------------------------------------
-INSTALL_ROOT="${HOME}/development"
+INSTALL_ROOT="${HOME}/.bin/development"
 DRY_RUN=0
 PREFLIGHT_ONLY=0
 ASSUME_YES=0
@@ -204,6 +204,11 @@ file_size() {
     else echo 0; fi
 }
 
+get_free_space() {
+    # Free bytes on the filesystem that holds the given path.
+    df -Pk "$1" 2>/dev/null | awk 'NR==2 {gsub(/\r/,""); print $4 * 1024}'
+}
+
 get_term_width() {
     local w=""
     if [ -t 2 ]; then
@@ -272,6 +277,24 @@ detect_profile() {
         fish) PROFILE_FILE="" ;;   # fish uses a different syntax; handled separately
         *)    PROFILE_FILE="$HOME/.profile" ;;
     esac
+}
+
+make_work_dir() {
+    # The work directory is created on the same filesystem as the install root.
+    # Putting it in /tmp is a trap: on most Linux desktops /tmp is a
+    # RAM-backed tmpfs, and a 1 GB Flutter archive does not fit there, which
+    # surfaces as "Failure writing output to destination".
+    local candidate d
+    for candidate in "$INSTALL_ROOT" "$(dirname "$INSTALL_ROOT")" "${TMPDIR:-/tmp}"; do
+        [ -d "$candidate" ] || continue
+        [ -w "$candidate" ] || continue
+        d="$(mktemp -d "$candidate/.flutstaller-tmp-XXXXXX" 2>/dev/null || true)"
+        if [ -n "$d" ] && [ -d "$d" ]; then
+            printf '%s' "$d"
+            return 0
+        fi
+    done
+    mktemp -d "${TMPDIR:-/tmp}/flutstaller-XXXXXX"
 }
 
 # -----------------------------------------------------------------------------
@@ -465,17 +488,38 @@ download_file() {
     local tmp="$dest.part"
     rm -f "$tmp"
 
+    if ! have curl; then
+        die "curl is required to download files but was not found. Install curl and re-run."
+    fi
+
     local total=0
     total=$(curl -sIL "$url" 2>/dev/null | awk 'BEGIN{IGNORECASE=1} /^content-length:/ {n=$2} END{gsub(/\r/,"",n); print n+0}')
 
-    if ! have curl; then
-        die "curl is required to download files but was not found. Install curl and re-run."
+    # The free space is checked before the transfer starts, so a full disk is
+    # reported plainly instead of surfacing half way through as a confusing
+    # write error.
+    local dir avail needed
+    dir="$(dirname "$dest")"
+    avail="$(get_free_space "$dir")"
+    if [ "$avail" -gt 0 ] && [ "$total" -gt 0 ]; then
+        needed=$(( total + 200 * 1024 * 1024 ))   # 200 MB of headroom
+        if [ "$avail" -lt "$needed" ]; then
+            fail "Not enough free space to download $(basename "$dest")"
+            detail "need $(human_size "$needed") in $dir, have $(human_size "$avail")"
+            detail "Free some space, or point the install root at a larger filesystem."
+            return 1
+        fi
     fi
 
     local start now cur pct speed eta last_time last_size
     start=$(date +%s); last_time=$start; last_size=0; speed=0
 
-    curl -L --fail --silent --show-error --output "$tmp" "$url" &
+    # curl's own diagnostics go to a file so they do not fight with the
+    # progress bar, and are reported if the transfer fails.
+    local errfile="$tmp.err"
+    rm -f "$errfile"
+    curl -L --fail --silent --show-error --retry 3 --retry-delay 2 \
+         --output "$tmp" "$url" 2> "$errfile" &
     local pid=$!
     while kill -0 "$pid" 2>/dev/null; do
         cur=$(file_size "$tmp")
@@ -495,14 +539,27 @@ download_file() {
         render_progress "$(basename "$dest")" "$pct" "$cur" "$total" "$speed" "$eta"
         sleep 0.4
     done
-    wait "$pid"; local rc=$?
-    printf '\r%*s\r' 100 "" >&2
+    wait "$pid"
+    local rc=$?
+    clear_progress
 
     if [ "$rc" -ne 0 ]; then
-        rm -f "$tmp"
-        fail "Download failed: $url"
+        local msg; msg="$(cat "$errfile" 2>/dev/null)"
+        rm -f "$tmp" "$errfile"
+        case "$msg" in
+            *"Failure writing output to destination"*|*"No space left on device"*)
+                fail "Ran out of disk space while downloading $(basename "$dest")"
+                detail "The download needs $(human_size "$total") in $dir, which has $(human_size "$avail") free."
+                detail "Free some space, or point the install root at a larger filesystem."
+                ;;
+            *)
+                fail "Download failed: $url"
+                [ -n "$msg" ] && detail "$msg"
+                ;;
+        esac
         return 1
     fi
+    rm -f "$errfile"
     mv -f "$tmp" "$dest"
 
     if [ -n "$expected" ]; then
@@ -1141,7 +1198,7 @@ Usage:
   install.sh [options]
 
 Options:
-  --install-root <dir>   Install everything under <dir> (default: $HOME/development)
+  --install-root <dir>   Install everything under <dir> (default: $HOME/.bin/development)
   --dry-run              Resolve versions, print the plan and exit
   --preflight-only       Report the environment and exit (read-only, no network)
   --yes                  Do not ask questions (licences are never auto-accepted)
@@ -1232,7 +1289,11 @@ mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="${TMPDIR:-/tmp}"
 LOG_FILE="$LOG_DIR/flutter-setup-$(date '+%Y%m%d-%H%M%S').log"
 : > "$LOG_FILE" 2>/dev/null || LOG_FILE=""
 
-WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/flutstaller-XXXXXX")"
+# The install root's parent is created up front so that the work directory can
+# live next to it, on the same filesystem. A RAM-backed /tmp cannot hold a
+# 1 GB Flutter archive.
+mkdir -p "$(dirname "$INSTALL_ROOT")" 2>/dev/null || true
+WORK_DIR="$(make_work_dir)"
 # shellcheck disable=SC2329  # called through the trap below
 cleanup() { [ -n "$WORK_DIR" ] && rm -rf "$WORK_DIR"; }
 trap cleanup EXIT INT TERM
@@ -1241,6 +1302,7 @@ detect_platform
 banner
 info "Log file: $LOG_FILE"
 info "Install root: $INSTALL_ROOT"
+info "Working directory: $WORK_DIR"
 info "This script was written by an AI (OpenCode). Please read the source before running it."
 
 detect_package_manager

@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- **The Linux and macOS install root moved to `~/.bin/development`** (it was
+  `$HOME/development`). Windows is unchanged at `C:\development`.
+
+### Fixed
+
+- **"Failure writing output to destination" when downloading the Flutter SDK.**
+  The downloads were staged in the temporary directory, which on most Linux
+  desktops is a RAM-backed `tmpfs` — a 1 GB Flutter archive does not fit there,
+  and curl reports the resulting ENOSPC as that unhelpful message. The work
+  directory is now created next to the install root, on the same filesystem, so
+  the download lands on the volume the SDK is going to be installed on. The
+  Windows installer had the same problem with `%TEMP%` and is fixed the same
+  way.
+- **A full disk is now reported before the transfer starts.** The free space is
+  checked against the download size first, and the failure says which path is
+  short, how much is needed and how much is there. If the disk does fill
+  anyway, the error says so in those words rather than passing curl's message
+  through.
+- Downloads now retry three times on a transient network error.
 
 ## [0.2.0] - 2026-10-20
 
@@ -75,7 +95,7 @@ them.
 - **A Linux and macOS installer** — `install.sh`, a POSIX-ish bash script that
   installs the same three components on those platforms:
   - the Flutter SDK, the Android SDK command-line tools and the platform
-    toolchain, all under `$HOME/development` by default;
+    toolchain, all under `$HOME/.bin/development` by default;
   - the Linux desktop packages (`clang`, `cmake`, `ninja`, `pkg-config`, the
     GTK 3 headers and the libstdc++ headers) from the distribution's own
     repository, mapped across `apt`, `dnf`, `yum`, `zypper`, `pacman`, `apk`,

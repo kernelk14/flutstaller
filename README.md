@@ -49,7 +49,7 @@ Four things worth knowing before the first run.
 
 | What | Where | Detail |
 |------|-------|--------|
-| The components | `C:\development` (Windows) · `$HOME/development` (Linux, macOS) | Nothing is written outside this folder, except the two Microsoft-controlled locations listed below. |
+| The components | `C:\development` (Windows) · `~/.bin/development` (Linux, macOS) | Nothing is written outside this folder, except the two Microsoft-controlled locations listed below. |
 | `ANDROID_HOME`, `ANDROID_SDK_ROOT` | your **user** environment | The machine-wide environment is never modified. |
 | `PATH` | your **user** environment | Your existing entries and their order are preserved; duplicates are skipped. |
 | `JAVA_HOME` | your **user** environment | Only set if the installer installed a JDK and `JAVA_HOME` was not already set. |
@@ -94,6 +94,12 @@ outstanding actions in the final report.
 | **Total** | **~20 GB** | **~8 GB** |
 
 The Windows installer checks the free space and warns you if it looks tight.
+
+Downloads are staged in a work directory **next to the install root**, on the
+same filesystem — not in `/tmp` or `%TEMP%`, which are often small or
+RAM-backed and cannot hold a 1 GB archive. The free space is checked before
+each transfer starts, so a full disk is reported plainly instead of as a
+confusing write error half way through.
 
 ### It never accepts a licence for you
 
@@ -376,7 +382,7 @@ CI paths stay non-interactive. An explicit switch always wins over the menu —
 
 |  | Windows | Linux | macOS |
 |---|---------|-------|-------|
-| **Install root** | `C:\development` | `$HOME/development` | `$HOME/development` |
+| **Install root** | `C:\development` | `~/.bin/development` | `~/.bin/development` |
 | **Toolchain** | Visual Studio 2026 + MSVC, CMake, Windows SDK | `clang`, `cmake`, `ninja`, `pkg-config`, GTK 3 and libstdc++ headers | Xcode, `xcode-select`, `xcodebuild -license` |
 | **Package manager** | the Visual Studio bootstrapper | `apt`, `dnf`, `yum`, `zypper`, `pacman`, `apk`, `xbps`, `emerge`, `eopkg` — detected | Homebrew, when present |
 | **Elevation** | UAC prompt | `sudo`, for the packages only | `sudo`, for the Xcode licence only |

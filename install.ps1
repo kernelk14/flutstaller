@@ -873,6 +873,23 @@ function Save-WebFile {
     }
     $total = $response.ContentLength
 
+    # The free space is checked before the transfer starts, so a full disk is
+    # reported plainly instead of surfacing half way through as a confusing
+    # write error.
+    $dir = Split-Path -Path $Destination -Parent
+    $avail = Get-FreeDiskSpace -Path $dir
+    if ($avail -gt 0 -and $total -gt 0) {
+        $needed = $total + (200MB)
+        if ($avail -lt $needed) {
+            $response.Close()
+            Clear-ProgressBar
+            Write-Err "Not enough free space to download $name"
+            Write-Detail ("need {0} in {1}, have {2}" -f (Format-Size $needed), $dir, (Format-Size $avail))
+            Write-Detail 'Free some space, or point the install root at a larger drive.'
+            return 0
+        }
+    }
+
     $sizeText = if ($total -gt 0) { '{0} / {1}' -f (Format-Size 0), (Format-Size $total) } else { '0 B' }
 
     $inStream = $response.GetResponseStream()
@@ -889,7 +906,6 @@ function Save-WebFile {
         while (($read = $inStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
             $outStream.Write($buffer, 0, $read)
             $totalRead += $read
-
             $now = Get-Date
             # Throughput over a 5 second sliding window.
             [void]$samples.Enqueue([pscustomobject]@{ T = $now; B = $totalRead })
@@ -915,10 +931,23 @@ function Save-WebFile {
                 Write-LogFileOnly ("  {0}  {1}  {2}  ETA {3}" -f $status, $sizeText, (Format-Throughput $speed), (Format-Duration $eta)) 'DETL'
             }
         }
+    } catch {
+        Clear-ProgressBar
+        try { $outStream.Close() } catch { }
+        try { $inStream.Close() } catch { }
+        try { $response.Close() } catch { }
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        if ($_.Exception.Message -match 'disk|space|Not enough') {
+            Write-Err "Ran out of disk space while downloading $name into $dir"
+            Write-Detail "Free some space, or point the install root at a larger drive."
+        } else {
+            Write-Err "Download failed: $Uri : $($_.Exception.Message)"
+        }
+        return 0
     } finally {
-        $outStream.Close()
-        $inStream.Close()
-        $response.Close()
+        try { $outStream.Close() } catch { }
+        try { $inStream.Close() } catch { }
+        try { $response.Close() } catch { }
     }
 
     $elapsed = ((Get-Date) - $started).TotalSeconds
@@ -2219,7 +2248,15 @@ try {
     Write-Host "WARNING: could not create the log folder '$LogDirectory'. Logging to $($script:LogFile) instead."
 }
 
-$script:WorkDir = Join-Path ([System.IO.Path]::GetTempPath()) ("flutstaller-{0}-{1}" -f $env:USERNAME, (Get-Date -Format 'yyyyMMddHHmmss'))
+# The work directory is created next to the install root, on the same volume,
+# so a large download does not have to fit in %TEMP% - which is often on a
+# different, much smaller drive.
+$workParent = Split-Path -Path $InstallRoot -Parent
+if (-not $workParent) { $workParent = [System.IO.Path]::GetTempPath() }
+try {
+    if (-not (Test-Path -LiteralPath $workParent)) { New-Item -ItemType Directory -Path $workParent -Force | Out-Null }
+} catch { $workParent = [System.IO.Path]::GetTempPath() }
+$script:WorkDir = Join-Path $workParent ("flutstaller-{0}-{1}" -f $env:USERNAME, (Get-Date -Format 'yyyyMMddHHmmss'))
 New-Item -ItemType Directory -Path $script:WorkDir -Force | Out-Null
 
 Write-RunLog 'Flutter development environment setup' 'TITLE'
