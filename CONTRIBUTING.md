@@ -39,20 +39,37 @@ without installing anything.
    Invoke-ScriptAnalyzer -Path .\install.ps1 -Settings .\PSScriptAnalyzerSettings.psd1
    ```
 
-3. **Run the smoke tests.** Both are read-only and touch nothing on disk
-   outside a temporary folder:
+3. **Check the Unix installer.** It must be POSIX-ish bash (macOS still ships
+   bash 3.2, so `mapfile` is out) and ShellCheck must be quiet:
+
+   ```bash
+   bash -n install.sh
+   shellcheck -S warning install.sh
+   ```
+
+4. **Run the smoke tests.** All of them are read-only and touch nothing on
+   disk outside a temporary folder:
 
    ```powershell
    .\install.ps1 -PreflightOnly   # environment report, no network
    .\install.ps1 -DryRun          # resolves the real vendor manifests, changes nothing
    ```
 
-4. **Check the pipe path.** The script must behave when it is piped into
-   `Invoke-Expression`, where there is no file on disk:
+   ```bash
+   ./install.sh --preflight-only
+   ./install.sh --dry-run
+   ```
+
+5. **Check the pipe path.** The script must behave when it is piped into
+   `Invoke-Expression` or `bash`, where there is no file on disk:
 
    ```powershell
    $env:FLUTSTALLER_PREFLIGHT_ONLY = '1'
    Get-Content .\install.ps1 -Raw | Invoke-Expression
+   ```
+
+   ```bash
+   FLUTSTALLER_PREFLIGHT_ONLY=1 curl -fsSL https://raw.githubusercontent.com/OWNER/REPO/main/install.sh | bash
    ```
 
    It must not close your session, and your `StrictMode` setting must be
@@ -64,6 +81,8 @@ without installing anything.
   `ProcessStartInfo.ArgumentList` (that does not exist in .NET Framework).
   `Set-StrictMode -Version 2.0` is in effect, so every variable must be
   initialised before use.
+* **bash 3.2 compatible.** No `mapfile`, no `readarray`, no associative
+  arrays. `read -a` is fine.
 * **Four spaces, no tabs.** Braces on the same line.
 * **Comment the *why*, not the *what*.** Especially where a behaviour looks
   odd — there are several places where something is done in an unusual way on
@@ -77,6 +96,9 @@ without installing anything.
 * **Every download URL must come from a vendor manifest** that is read at run
   time, and the artifact must be checksum-verified. Do not hard-code a
   version-specific file name.
+* **Parse the manifests with standard tools.** Neither script may depend on
+  `python3` or `jq`: on some systems `python3` is only a stub, and the
+  manifests have a regular enough structure to read with `sed` and `awk`.
 * **Do not add an installation step** that the project has not been asked for.
   If a new component is genuinely required, explain why in the issue first.
 

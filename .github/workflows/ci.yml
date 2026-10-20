@@ -102,3 +102,42 @@ jobs:
           rem The launcher must not change the execution policy.
           call run-setup.cmd -PreflightOnly
           if errorlevel 1 exit /b 1
+
+  unix:
+    name: Unix installer (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check
+        shell: bash
+        run: bash -n install.sh && echo "syntax ok"
+
+      - name: ShellCheck
+        shell: bash
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -S warning install.sh
+          else
+            sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+            shellcheck -S warning install.sh
+          fi
+
+      - name: Preflight (read-only)
+        shell: bash
+        run: ./install.sh --preflight-only
+
+      - name: Dry run against the live vendor manifests
+        shell: bash
+        run: ./install.sh --dry-run --install-root "$HOME/flut-test"
+
+      - name: Run the piped way (as a user would with curl | bash)
+        shell: bash
+        run: |
+          export FLUTSTALLER_PREFLIGHT_ONLY=1
+          curl -fsSL "${{ github.server_url }}/${{ github.repository }}/raw/${{ github.sha }}/install.sh" | bash
+          echo "the piped run completed and the session survived"
