@@ -52,6 +52,10 @@
 .PARAMETER SkipVisualStudio
     Do not install Visual Studio (the other two components are still installed).
 
+.PARAMETER SkipAndroid
+    Do not install the Android SDK (the other two components are still
+    installed).
+
 .PARAMETER SkipAndroidLicenses
     Do not run the Android SDK licence acceptance step.
 
@@ -91,6 +95,7 @@
         FLUTSTALLER_VS_EDITION             Community | Professional | Enterprise
         FLUTSTALLER_INSTALL_PREREQUISITES  1 to also install Git and a JDK
         FLUTSTALLER_SKIP_VISUAL_STUDIO     1 to skip Visual Studio
+        FLUTSTALLER_SKIP_ANDROID           1 to skip the Android SDK
         FLUTSTALLER_SKIP_ANDROID_LICENSES  1 to skip the licence step
         FLUTSTALLER_SKIP_VERIFICATION      1 to skip the final checks
         FLUTSTALLER_DRY_RUN                1 to only print the plan
@@ -110,6 +115,7 @@ param(
     [switch] $Yes,
     [switch] $InstallPrerequisites,
     [switch] $SkipVisualStudio,
+    [switch] $SkipAndroid,
     [switch] $SkipAndroidLicenses,
     [switch] $SkipVerification,
     [string] $LogDirectory,
@@ -175,6 +181,7 @@ $PreflightOnly          = Resolve-EnvFlag  -Value ([bool]$PreflightOnly)  -Defau
 $Yes                    = Resolve-EnvFlag  -Value ([bool]$Yes)            -Default $false           -Name 'FLUTSTALLER_YES'
 $InstallPrerequisites   = Resolve-EnvFlag  -Value ([bool]$InstallPrerequisites) -Default $false      -Name 'FLUTSTALLER_INSTALL_PREREQUISITES'
 $SkipVisualStudio       = Resolve-EnvFlag  -Value ([bool]$SkipVisualStudio) -Default $false         -Name 'FLUTSTALLER_SKIP_VISUAL_STUDIO'
+$SkipAndroid           = Resolve-EnvFlag  -Value ([bool]$SkipAndroid) -Default $false             -Name 'FLUTSTALLER_SKIP_ANDROID'
 $SkipAndroidLicenses    = Resolve-EnvFlag  -Value ([bool]$SkipAndroidLicenses) -Default $false      -Name 'FLUTSTALLER_SKIP_ANDROID_LICENSES'
 $SkipVerification       = Resolve-EnvFlag  -Value ([bool]$SkipVerification) -Default $false         -Name 'FLUTSTALLER_SKIP_VERIFICATION'
 
@@ -2222,32 +2229,43 @@ try {
     # the one-liner and the CI paths stay fully non-interactive.
     # ---------------------------------------------------------------------------------
     $wantFlutter = $true
-    $wantAndroid = $true
+    $wantAndroid = (-not $SkipAndroid)
     $wantVs      = (-not $SkipVisualStudio)
+    # An explicit switch always wins over the menu's default.
+    $skipAndroidExplicit = $SkipAndroid
+    $skipVsExplicit = $SkipVisualStudio
     if (-not $Yes -and -not $script:IsPiped) {
         $menu = Show-MainMenu
         if ($menu.Preflight) { Show-Preflight; return }
         $wantFlutter = ($menu.Components -contains 'flutter')
         $wantAndroid = ($menu.Components -contains 'android')
         $wantVs      = ($menu.Components -contains 'vs')
+        if ($skipAndroidExplicit) { $wantAndroid = $false }
+        if ($skipVsExplicit) { $wantVs = $false }
     }
     if (-not $wantFlutter) { Write-Info 'Skipping the Flutter SDK (menu choice).' }
-    if (-not $wantAndroid) { Write-Info 'Skipping the Android SDK (menu choice).' }
+    if (-not $wantAndroid) { Write-Info 'Skipping the Android SDK (menu choice or -SkipAndroid).' }
     if (-not $wantVs) { $SkipVisualStudio = $true }
 
     # ---------------------------------------------------------------------------------
     Write-TuiSection -Title 'RESOLVING' -Detail 'official vendor manifests'
     # ---------------------------------------------------------------------------------
     $flutterRelease = Resolve-FlutterStable
-    $repoXmlPath = Join-Path $script:WorkDir 'android-repository.xml'
-    $repoXml = Get-AndroidRepositoryXml -Destination $repoXmlPath
-    $cmdlinePackage = Resolve-AndroidCmdlineTools -Repo $repoXml
-    Write-Ok "Android command-line tools build $($cmdlinePackage.Version) resolved"
-    Write-Detail $cmdlinePackage.Url
+    $cmdlinePackage = $null
+    $packageInfo = $null
+    if ($wantAndroid) {
+        $repoXmlPath = Join-Path $script:WorkDir 'android-repository.xml'
+        $repoXml = Get-AndroidRepositoryXml -Destination $repoXmlPath
+        $cmdlinePackage = Resolve-AndroidCmdlineTools -Repo $repoXml
+        Write-Ok "Android command-line tools build $($cmdlinePackage.Version) resolved"
+        Write-Detail $cmdlinePackage.Url
 
-    $packageInfo = Get-AndroidStablePackages -Repo $repoXml
-    Write-Info ('Newest published stable build-tools: {0}' -f (($packageInfo.BuildTools | Select-Object -First 3 | ForEach-Object { $_.Path }) -join ', '))
-    Write-Info ('Newest published stable platforms : {0}' -f (($packageInfo.Platforms | Select-Object -First 3 | ForEach-Object { $_.Path }) -join ', '))
+        $packageInfo = Get-AndroidStablePackages -Repo $repoXml
+        Write-Info ('Newest published stable build-tools: {0}' -f (($packageInfo.BuildTools | Select-Object -First 3 | ForEach-Object { $_.Path }) -join ', '))
+        Write-Info ('Newest published stable platforms : {0}' -f (($packageInfo.Platforms | Select-Object -First 3 | ForEach-Object { $_.Path }) -join ', '))
+    } else {
+        Write-Info 'The Android SDK is skipped, so its manifest is not fetched.'
+    }
 
     $vsBootstrapperUrl = switch ($VsEdition) {
         'Professional' { $script:VsProfessionalUrl }
@@ -2320,7 +2338,7 @@ try {
         $planItems.Add("  cmd-line tools ..... $($cmdlinePackage.Url)")
         $planItems.Add("  packages ............ platform-tools, build-tools, platforms/android-<Flutter compileSdk>")
     } else {
-        $planItems.Add('Android SDK ........... SKIPPED (menu choice)')
+        $planItems.Add('Android SDK ........... SKIPPED (menu choice or -SkipAndroid)')
     }
     if ($wantVs) {
         $planItems.Add("Visual Studio 2026 ..... $($script:VsDir)  (edition $VsEdition)")
@@ -2406,8 +2424,8 @@ try {
     # ---------------------------------------------------------------------------------
     Write-Host ''
     $confirmLines = @(
-        ('  {0} Flutter SDK ........ {1}   {2}' -f $t.Bullet, $flutterRelease.Version.PadRight(10), $script:FlutterDir),
-        ('  {0} Android SDK ....... {1}   {2}' -f $t.Bullet, ("cmdline-tools $($cmdlinePackage.Version)").PadRight(10), $script:AndroidDir),
+        ('  {0} Flutter SDK ........ {1}   {2}' -f $t.Bullet, $flutterRelease.Version.PadRight(10), $(if ($wantFlutter) { $script:FlutterDir } else { '(skipped)' })),
+        ('  {0} Android SDK ....... {1}   {2}' -f $t.Bullet, $(if ($wantAndroid) { "cmdline-tools $($cmdlinePackage.Version)" } else { '(skipped)' }).PadRight(10), $(if ($wantAndroid) { $script:AndroidDir } else { '(skipped)' })),
         ('  {0} Visual Studio ..... {1}   {2}' -f $t.Bullet, $VsEdition.PadRight(10), $(if ($installVs) { $script:VsDir } else { '(skipped)' }))
     )
     Write-TuiBox -Lines $confirmLines -Title 'READY TO INSTALL' -BorderColor 'Green' -TextColor 'Gray'
@@ -2636,9 +2654,13 @@ try {
 
     if (Test-Path -LiteralPath $script:FlutterExe) {
         $env:PATH = "$script:FlutterBin;" + $env:PATH
-        Write-Info 'Running: flutter config --android-sdk'
-        $r = Invoke-Native -FilePath $script:FlutterExe -Arguments @('config', '--android-sdk', $script:AndroidDir) -TimeoutSeconds 900
-        Write-NativeOutput $r.StdOut
+        if (Test-Path -LiteralPath $script:AndroidDir) {
+            Write-Info 'Running: flutter config --android-sdk'
+            $r = Invoke-Native -FilePath $script:FlutterExe -Arguments @('config', '--android-sdk', $script:AndroidDir) -TimeoutSeconds 900
+            Write-NativeOutput $r.StdOut
+        } else {
+            Write-Info 'Skipping flutter config --android-sdk (the Android SDK was not installed).'
+        }
         if ($jdk) {
             Write-Info 'Running: flutter config --jdk-dir'
             $r = Invoke-Native -FilePath $script:FlutterExe -Arguments @('config', '--jdk-dir', $jdk.Path) -TimeoutSeconds 900

@@ -1162,6 +1162,33 @@ detect_profile
 [ "$HOST_OS" = "macos" ] && info "Homebrew: $(have brew && echo present || echo 'not installed')"
 
 # -----------------------------------------------------------------------------
+# The interactive menu. Skipped when running unattended (--yes) or from a pipe,
+# so the one-liner and the CI paths stay fully non-interactive.
+# -----------------------------------------------------------------------------
+WANT_FLUTTER=1
+WANT_ANDROID=$([ "$SKIP_ANDROID" -eq 1 ] && echo 0 || echo 1)
+WANT_TOOLCHAIN=$([ "$SKIP_DESKTOP_TOOLCHAIN" -eq 1 ] && echo 0 || echo 1)
+if [ "$ASSUME_YES" -eq 0 ] && [ "$IS_PIPED" -eq 0 ]; then
+    box "WHAT WOULD YOU LIKE TO INSTALL?" "  ->  1   Install all three components
+  ->  2   The Flutter SDK on its own
+  ->  3   The Android SDK on its own
+  ->  4   The ${HOST_OS} toolchain on its own
+  ->  5   Preflight report only (change nothing)"
+    printf '\n'
+    printf '  Choose [1-5, default 1] : '
+    read -r menu_choice
+    case "${menu_choice:-1}" in
+        2) WANT_FLUTTER=1; WANT_ANDROID=0; WANT_TOOLCHAIN=0 ;;
+        3) WANT_FLUTTER=0; WANT_ANDROID=1; WANT_TOOLCHAIN=0 ;;
+        4) WANT_FLUTTER=0; WANT_ANDROID=0; WANT_TOOLCHAIN=1 ;;
+        5) PREFLIGHT_ONLY=1 ;;
+    esac
+    # An explicit switch always wins over the menu's default.
+    [ "$SKIP_ANDROID" -eq 1 ] && WANT_ANDROID=0
+    [ "$SKIP_DESKTOP_TOOLCHAIN" -eq 1 ] && WANT_TOOLCHAIN=0
+fi
+
+# -----------------------------------------------------------------------------
 # Preflight
 # -----------------------------------------------------------------------------
 if [ "$PREFLIGHT_ONLY" -eq 1 ]; then
@@ -1197,11 +1224,13 @@ fi
 # -----------------------------------------------------------------------------
 section "RESOLVING" "official vendor manifests"
 resolve_flutter_release
-if [ "$SKIP_ANDROID" -eq 0 ]; then
+if [ "$WANT_ANDROID" -eq 1 ]; then
     resolve_android_cmdline_tools
     resolve_android_packages
     info "Newest published stable build-tools: $(printf '%s' "$ANDROID_BUILD_TOOLS" | tr '\n' ',')"
     info "Newest published stable platforms : $(printf '%s' "$ANDROID_PLATFORMS" | tr '\n' ',')"
+else
+    info "The Android SDK is skipped, so its manifest is not fetched."
 fi
 
 # -----------------------------------------------------------------------------
@@ -1258,9 +1287,15 @@ fi
 # Plan
 # -----------------------------------------------------------------------------
 section "PLAN" "what is going to change"
-plan="Install root ............. $INSTALL_ROOT
+plan="Install root ............. $INSTALL_ROOT"
+if [ "$WANT_FLUTTER" -eq 1 ]; then
+    plan="$plan
 Flutter SDK ............... $INSTALL_ROOT/flutter  (stable $FLUTTER_VERSION)"
-if [ "$SKIP_ANDROID" -eq 0 ]; then
+else
+    plan="$plan
+Flutter SDK ............... SKIPPED"
+fi
+if [ "$WANT_ANDROID" -eq 1 ]; then
     plan="$plan
 Android SDK .............. $INSTALL_ROOT/Android/Sdk
   cmd-line tools ........ $ANDROID_TOOLS_URL
@@ -1269,12 +1304,17 @@ else
     plan="$plan
 Android SDK .............. SKIPPED"
 fi
-if [ "$HOST_OS" = "linux" ]; then
-    plan="$plan
+if [ "$WANT_TOOLCHAIN" -eq 1 ]; then
+    if [ "$HOST_OS" = "linux" ]; then
+        plan="$plan
 Linux toolchain .......... clang cmake ninja pkg-config GTK 3 and the libstdc++ headers"
+    else
+        plan="$plan
+macOS toolchain .......... Xcode, its command line tools and the accepted licences"
+    fi
 else
     plan="$plan
-macOS toolchain .......... Xcode, its command line tools and the accepted licences"
+${HOST_OS} toolchain ......... SKIPPED"
 fi
 plan="$plan
 
@@ -1307,12 +1347,16 @@ mkdir -p "$INSTALL_ROOT"
 # Install
 # -----------------------------------------------------------------------------
 section "STEP 1/4" "Flutter SDK"
-if ! install_flutter; then
-    fail "The Flutter SDK could not be installed."
+if [ "$WANT_FLUTTER" -eq 1 ]; then
+    if ! install_flutter; then
+        fail "The Flutter SDK could not be installed."
+    fi
+else
+    warn "The Flutter SDK was skipped."
 fi
 
 section "STEP 2/4" "Android SDK command-line tools"
-if [ "$SKIP_ANDROID" -eq 0 ]; then
+if [ "$WANT_ANDROID" -eq 1 ]; then
     if ! install_android_tools; then
         fail "The Android command-line tools could not be installed."
     fi
@@ -1321,8 +1365,8 @@ else
 fi
 
 section "STEP 3/4" "$HOST_OS toolchain"
-if [ "$SKIP_DESKTOP_TOOLCHAIN" -eq 1 ]; then
-    warn "The desktop toolchain was skipped (-SkipDesktopToolchain)."
+if [ "$WANT_TOOLCHAIN" -eq 0 ]; then
+    warn "The desktop toolchain was skipped."
 elif [ "$HOST_OS" = "linux" ]; then
     install_linux_toolchain || warn "The Linux desktop toolchain is not fully installed."
 else
@@ -1330,7 +1374,7 @@ else
 fi
 
 section "STEP 4/4" "Android SDK packages"
-if [ "$SKIP_ANDROID" -eq 0 ]; then
+if [ "$WANT_ANDROID" -eq 1 ]; then
     # The platform Flutter itself declares as its compile SDK.
     compile_sdk=""
     if [ -f "$INSTALL_ROOT/flutter/packages/flutter_tools/gradle/src/main/kotlin/FlutterExtension.kt" ]; then

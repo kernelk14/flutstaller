@@ -26,10 +26,13 @@ them.
     `xbps-install`, `emerge` and `eopkg`;
   - Xcode, its command line tools and the accepted licence on macOS, including
     a Rosetta 2 check on Apple Silicon;
-  - the same progress bar, menu, report, dry run and preflight mode as the
-    Windows installer;
+  - the same progress bar, interactive menu, report, dry run and preflight
+    mode as the Windows installer;
   - the same environment variables, written into the shell profile inside a
     managed block that is rewritten on every run, so `PATH` never duplicates.
+- **`-SkipAndroid` / `--skip-android`**, and `FLUTSTALLER_SKIP_ANDROID`, on both
+  installers, so the Android SDK can be left out. An explicit switch always
+  wins over the interactive menu.
 - **A CI job for Linux and macOS** that syntax-checks `install.sh`, runs
   ShellCheck, exercises the preflight and dry-run modes, and runs the script
   the way a user would (`curl … | bash`).
@@ -115,6 +118,10 @@ them.
   SHA-1 that Google publishes for it, on Linux and macOS as well as Windows.
 - The Android package list is de-duplicated, so the compile SDK is not
   requested twice when it is also the newest published platform.
+- The interactive menu no longer overrides an explicit `-SkipAndroid` or
+  `-SkipVisualStudio` switch.
+- `flutter config --android-sdk` is no longer run when the Android SDK was
+  skipped, so Flutter is not pointed at a folder that does not exist.
 
 ### What it installs
 
