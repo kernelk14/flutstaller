@@ -53,6 +53,7 @@ exactly what it did and what (if anything) is still missing.
 
 - [What gets installed](#what-gets-installed)
 - [Quick start](#quick-start)
+- [What it looks like](#what-it-looks-like)
 - [About this project](#about-this-project)
 - [Prerequisites](#prerequisites)
 - [Usage](#usage)
@@ -303,9 +304,13 @@ Either way it installs the official *Git for Windows* and *Microsoft Build of
 OpenJDK 17* under `C:\development\Git` and `C:\development\jdk`, adds them to
 your `PATH`, and points Flutter at the JDK.
 
-There is a third option for the JDK: if none is found, the script adds
-Microsoft's official `Component.OpenJDK` to the Visual Studio installation,
-which keeps everything inside the three requested components.
+On Linux and macOS the JDK comes from the distribution's own repository
+(`apt`, `dnf`, `brew`, …) and Git likewise, because that is where a developer
+machine already expects them to come from.
+
+There is a third option for the JDK on Windows: if none is found, the script
+adds Microsoft's official `Component.OpenJDK` to the Visual Studio
+installation, which keeps everything inside the three requested components.
 
 If you would rather not install them, the script finishes the rest of the work
 and lists them as outstanding actions in the final report.
@@ -503,6 +508,9 @@ installs exactly that platform, plus the newest published stable build-tools.
 * **Visual Studio** — the installer runs with `--passive`, never `--quiet`, so
   the installer shows Microsoft's licence agreement and **you** accept it in
   that window. The script never accepts it for you.
+* **Xcode** (macOS) — an Apple software licence. The script shows you where to
+  read it and asks before accepting it. The Rosetta 2 install command accepts a
+  licence of its own, so it is left for you to run.
 
 ### Administrator rights
 
@@ -513,7 +521,10 @@ silently. If it does re-launch, your original account's `PATH` and environment
 variables are still updated for *your* account, even if the elevated window
 belongs to a different administrator account.
 
-### Visual Studio 2026 and `C:\development`
+On Linux and macOS, `sudo` is used for exactly two things: the distribution's
+packages on Linux, and the Xcode licence on macOS. Nothing else runs as root.
+
+### Visual Studio 2026 and the install path (Windows)
 
 Visual Studio 2026 **does** support a custom install path, and the script uses
 it:
@@ -620,11 +631,16 @@ The script is safe to run again:
 At the end the script runs and reports on:
 
 * `flutter --version`
-* `flutter config --enable-windows-desktop`
+* `flutter config --enable-windows-desktop` (or `--enable-linux-desktop` /
+  `--enable-macos-desktop`)
 * `flutter doctor -v`
 * `flutter doctor --android-licenses` (interactive — you confirm each licence)
 * `adb version`
-* the MSVC compiler (`cl.exe`), the CMake tools, MSBuild and the Windows SDK
+* **Windows** — the MSVC compiler (`cl.exe`), the CMake tools, MSBuild and the
+  Windows SDK
+* **Linux** — `clang`, `cmake`, `ninja`, `pkg-config` and the GTK 3
+  development libraries (`pkg-config --exists gtk+-3.0`)
+* **macOS** — Xcode
 * that `flutter` and `adb` resolve **through `PATH`**
 * that the accepted Android SDK licence was recorded in the SDK's `licenses` folder
 
@@ -658,21 +674,24 @@ bar is automatically replaced by plain status lines, so logs stay readable.
 
 Plan for roughly **20 GB free**:
 
-| Component | Approximate size |
-|-----------|------------------|
-| Flutter SDK | ~3.5 GB |
-| Android SDK (tools + packages) | ~2 GB |
-| Visual Studio 2026 (C++ workload) | ~10–14 GB |
+| Component | Windows | Linux / macOS |
+|-----------|---------|---------------|
+| Flutter SDK | ~3.5 GB | ~3.5 GB |
+| Android SDK (tools + packages) | ~2 GB | ~2 GB |
+| The platform toolchain | Visual Studio 2026: ~10–14 GB | Linux packages: ~2 GB · macOS: Xcode is a separate App Store download |
+| **Total** | **~20 GB** | **~8 GB** |
 
-The script checks the free space and warns you if it looks tight.
+The Windows script checks the free space and warns you if it looks tight.
 
 ---
 
 ## Logs
 
-Every run writes `logs\flutter-setup-<timestamp>.log` next to the script (or to
-`%TEMP%\flutstaller-logs` when piped), with the full output of each step, the
-resolved download URLs, the checksums and the verification results.
+Every run writes a log next to the script — `logs\flutter-setup-<timestamp>.log`
+on Windows, `logs/flutter-setup-<timestamp>.log` on Linux and macOS, and
+`%TEMP%\flutstaller-logs` (or `/tmp/flutstaller-logs`) when the script is
+piped. It contains the full output of each step, the resolved download URLs,
+the checksums and the verification results.
 
 **Attach the log to any bug report** — it is by far the most useful thing you
 can provide.
@@ -683,14 +702,20 @@ can provide.
 
 | Symptom | What to do |
 |---------|------------|
-| *"Unable to find git in your PATH"* | Git for Windows is missing. Install it from <https://git-scm.com/download/win>, or re-run with `-InstallPrerequisites`. |
-| `flutter doctor` reports no Java | A JDK is missing. Re-run with `-InstallPrerequisites`, or allow the Visual Studio OpenJDK component (the script does this automatically when no JDK is found). |
+| *"Unable to find git in your PATH"* | Git is missing. Install it from <https://git-scm.com/download/win> on Windows, or with your package manager on Linux and macOS. Or re-run with `-InstallPrerequisites`. |
+| `flutter doctor` reports no Java | A JDK is missing. Re-run with `-InstallPrerequisites`, or allow the Visual Studio OpenJDK component on Windows (the script does this automatically when no JDK is found). |
 | *"running scripts is disabled on this system"* | See [Script execution policy](#script-execution-policy) below. |
 | The Visual Studio installer was cancelled | Exit code 1602 means the installer window was closed. Re-run the script. |
 | The Visual Studio installer returns 740 | It needs elevation. Re-run from an elevated PowerShell window. |
-| `flutter doctor` cannot find the Android SDK | Run `flutter config --android-sdk C:\development\Android\Sdk`. |
-| Not enough disk space | Free up space or point `-InstallRoot` at a drive with room. |
-| The script is blocked by the execution policy | `Unblock-File -LiteralPath .\install.ps1` — this changes no policy. |
+| `flutter doctor` cannot find the Android SDK | Run `flutter config --android-sdk <your install root>/Android/Sdk`. |
+| `flutter doctor` says the GTK 3 libraries are missing (Linux) | Install `libgtk-3-dev` (or `gtk3-devel`, `gtk3`, `gtk3-dev` on the other distributions) — the script does this, but it needs `sudo`. |
+| `xcode-select: error: tool 'xcode-select' requires macOS 10.15 or later` (macOS) | The command line tools are missing. Re-run the script, or run `xcode-select --install` and finish the system dialog. |
+| `xcodebuild: error: The license is not accepted` (macOS) | Run `sudo xcodebuild -license` and read the agreement. |
+| The Mac is Apple Silicon and an x86_64 tool will not run | Install Rosetta 2: `softwareupdate --install-rosetta --agree-to-license`. |
+| The Android CLI is not found after the install | The command-line tools may be older than 23.0, which had no native `android` binary. Re-run the installer to update them. |
+| Not enough disk space | Free up space or point `-InstallRoot` / `--install-root` at a drive with room. |
+| The script is blocked by the execution policy (Windows) | `Unblock-File -LiteralPath .\install.ps1` — this changes no policy. |
+| `Permission denied` running `./install.sh` | The file lost its executable bit. Run `chmod +x install.sh`, or just run `bash install.sh`. |
 
 ### Script execution policy
 
