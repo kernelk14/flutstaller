@@ -442,6 +442,20 @@ You can also pass parameters by turning the download into a script block:
 curl -fsSL https://raw.githubusercontent.com/kernelk14/flutstaller/main/install.sh | bash --dry-run
 ```
 
+### Running without a terminal
+
+A piped run has no terminal on standard input, so anything that would ask a
+question would read EOF and silently do nothing. The installers therefore
+detect this and behave differently:
+
+| | With a terminal | Piped / unattended |
+|---|---|---|
+| The component menu | shown | skipped |
+| "Proceed with the installation?" | asked | **proceeds** — you asked for it |
+| The Android SDK licence | asked | **accepted**, after the agreement is printed in full. It is recorded in the SDK's `licenses` folder and listed in the report |
+| The Xcode licence | asked | **not accepted** — an Apple licence always needs an explicit confirmation, so it is reported as an outstanding action instead |
+| The prerequisites (Git, JDK) | asked | **not installed** unless you pass `-InstallPrerequisites` |
+
 **A word of caution.** `irm … | iex` executes whatever the server returns at
 that moment, without showing you the code first. That is a property of the
 pattern, not of this project. If that trade-off is not for you, download the file

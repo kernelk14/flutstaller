@@ -127,7 +127,10 @@ jobs:
               sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
             fi
           fi
-          shellcheck -S warning install.sh
+          # --enable=all includes the optional checks, notably SC2154, which
+          # catches a variable that is referenced but never assigned. The script
+          # runs with "set -u", so such a bug is a fatal error at run time.
+          shellcheck --enable=all -S warning install.sh
 
       - name: Preflight (read-only)
         shell: bash

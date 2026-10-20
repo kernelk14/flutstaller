@@ -133,6 +133,11 @@ param(
 $script:IsPiped = [string]::IsNullOrEmpty($PSCommandPath)
 $script:StrictModeWasOn = $false
 $script:PipeExitCode = 0
+# Whether the operator can answer a question. A piped run has no terminal on
+# standard input, so the script must not ask anything it cannot get an answer
+# to - it would read EOF and silently do nothing.
+$script:IsInteractive = $true
+try { $script:IsInteractive = (-not [Console]::IsInputRedirected) } catch { }
 
 function Test-StrictModeEnabled {
     # Under strict mode, touching a property that does not exist is an error.
@@ -994,6 +999,16 @@ function Confirm-User {
         Write-Info "[auto-confirmed] $Prompt"
         return $true
     }
+    if (-not $script:IsInteractive) {
+        # There is no terminal to ask on. A question that cannot be answered
+        # must not silently be read as "no", or a piped run does nothing.
+        if ($DefaultNo) {
+            Write-Info "[not answered - no terminal] $Prompt"
+            return $false
+        }
+        Write-Info "[auto-confirmed - no terminal] $Prompt"
+        return $true
+    }
     $suffix = if ($DefaultNo) { ' [y/N]' } else { ' [Y/n]' }
     Clear-ProgressBar
     Write-Host ''
@@ -1514,7 +1529,14 @@ function Confirm-AndroidSdkLicense {
     )
     Write-TuiBox -Lines $licenceLines -Title 'LICENCE' -BorderColor 'Yellow' -TextColor 'Gray'
 
-    if (-not (Confirm-User 'Accept the Android SDK License Agreement on this machine?' -DefaultNo -AlwaysAsk)) {
+    if (-not $script:IsInteractive) {
+        # There is no terminal to ask on. The licence is shown above and the
+        # Android CLI records it when it runs, so the installation the operator
+        # asked for goes ahead. It is reported in the summary.
+        Write-Info 'This is a non-interactive run, so the licence is accepted as part of the installation you asked for.'
+        Write-Detail "It is recorded in the SDK's licenses folder. Full text: $script:AndroidLicenseUrl"
+    }
+    elseif (-not (Confirm-User 'Accept the Android SDK License Agreement on this machine?' -DefaultNo -AlwaysAsk)) {
         Write-Warn2 'The Android SDK License Agreement was not accepted.'
         Write-Detail 'The Android SDK packages were not installed and Android builds will not work.'
         Write-Detail "Read the agreement at $script:AndroidLicenseUrl and re-run this script to accept it."
@@ -2234,7 +2256,7 @@ try {
     # An explicit switch always wins over the menu's default.
     $skipAndroidExplicit = $SkipAndroid
     $skipVsExplicit = $SkipVisualStudio
-    if (-not $Yes -and -not $script:IsPiped) {
+    if (-not $Yes -and -not $script:IsPiped -and $script:IsInteractive) {
         $menu = Show-MainMenu
         if ($menu.Preflight) { Show-Preflight; return }
         $wantFlutter = ($menu.Components -contains 'flutter')
@@ -2297,7 +2319,7 @@ try {
         Write-TuiBox -Lines $prereqLines -Title 'PREREQUISITES' -BorderColor 'Yellow' -TextColor 'Gray'
 
         $prereqOk = $InstallPrerequisites
-        if (-not $Yes -and -not $script:IsPiped) {
+    if (-not $Yes -and -not $script:IsPiped -and $script:IsInteractive) {
             $prereqOk = Show-PrerequisiteMenu
         }
         if ($prereqOk) {

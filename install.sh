@@ -33,6 +33,7 @@ set -uo pipefail
 # -----------------------------------------------------------------------------
 ANDROID_REPO_URL="https://dl.google.com/android/repository/repository2-3.xml"
 ANDROID_REPO_BASE="https://dl.google.com/android/repository/"
+ANDROID_LICENSE_URL="https://developer.android.com/studio/terms"
 
 # -----------------------------------------------------------------------------
 # Defaults
@@ -55,6 +56,7 @@ HOST_ARCH=""            # x64 | arm64
 PKG_MANAGER=""          # apt | dnf | yum | zypper | pacman | apk | xbps | emerge | eopkg | brew
 PROFILE_FILE=""
 IS_PIPED=0
+IS_INTERACTIVE=1
 WORK_DIR=""
 
 # -----------------------------------------------------------------------------
@@ -78,7 +80,7 @@ fi
 
 LOG_FILE=""
 
-log() { printf '%s\n' "$*"; }
+log() { clear_progress; printf '%s\n' "$*"; }
 log_to_file() { [ -n "$LOG_FILE" ] && printf '%s\n' "$*" >> "$LOG_FILE" 2>/dev/null; return 0; }
 
 info()  { log "$*"; log_to_file "$(date '+%Y-%m-%d %H:%M:%S') [INFO ] $*"; }
@@ -148,6 +150,16 @@ confirm() {
         info "[auto-confirmed] $prompt"
         return 0
     fi
+    if [ "$IS_INTERACTIVE" -eq 0 ]; then
+        # There is no terminal to ask on. A question that cannot be answered
+        # must not silently be read as "no", or a piped run does nothing.
+        if [ "$default_no" -eq 1 ]; then
+            info "[not answered - no terminal] $prompt"
+            return 1
+        fi
+        info "[auto-confirmed - no terminal] $prompt"
+        return 0
+    fi
     printf '\n'
     printf '%s  %s %s : ' "${C_YELLOW}->${C_RESET}" "$prompt" "$([ "$default_no" -eq 1 ] && echo '[y/N]' || echo '[Y/n]')"
     read -r answer
@@ -190,6 +202,31 @@ file_size() {
     if stat -c%s "$1" >/dev/null 2>&1; then stat -c%s "$1" 2>/dev/null || echo 0
     elif stat -f%z "$1" >/dev/null 2>&1; then stat -f%z "$1" 2>/dev/null || echo 0
     else echo 0; fi
+}
+
+get_term_width() {
+    local w=""
+    if [ -t 2 ]; then
+        w="$(tput cols 2>/dev/null || true)"
+    fi
+    if ! [ "$w" -gt 40 ] 2>/dev/null; then
+        w="${COLUMNS:-80}"
+    fi
+    if ! [ "$w" -gt 40 ] 2>/dev/null; then w=80; fi
+    if [ "$w" -gt 120 ] 2>/dev/null; then w=120; fi
+    printf '%s' "$w"
+}
+
+clear_progress() {
+    # Erase the in-place bar so the next line is not written over it.
+    if [ "${PROGRESS_LAST_LINE:-0}" -eq 1 ]; then
+        if [ -t 2 ]; then
+            printf '\r%*s\r' "$(get_term_width)" "" >&2
+        else
+            printf '\n' >&2
+        fi
+        PROGRESS_LAST_LINE=0
+    fi
 }
 
 # -----------------------------------------------------------------------------
@@ -364,17 +401,31 @@ resolve_android_packages() {
 # Download with a live progress bar
 # -----------------------------------------------------------------------------
 render_progress() {
-    # The in-place bar is only drawn to a real terminal; a redirected stream
-    # gets a plain line every few seconds instead.
+    # The in-place bar is only drawn to a real terminal, and it is always sized
+    # to fit the terminal width. A bar wider than the terminal wraps, and the
+    # carriage return then lands in the wrong place and corrupts the log.
     if [ ! -t 2 ]; then
-        if [ "${PROGRESS_LAST_LINE:-0}" -gt 0 ]; then
-            printf '\r%*s\r' 100 "" >&2
+        # A redirected stream gets a plain line instead, so logs stay readable.
+        if [ "${PROGRESS_LAST_LINE:-0}" -eq 1 ]; then
+            printf '\n' >&2
         fi
         PROGRESS_LAST_LINE=0
         return 0
     fi
+
     local label="$1" pct="$2" cur="$3" total="$4" speed="$5" eta="$6"
-    local w=96 barw=28 filled="" i
+    local width; width="$(get_term_width)"
+    local labelmax=28 sizemax=20 fixed=70 barw filled="" i
+    barw=$(( width - fixed ))
+    if [ "$barw" -lt 8 ]; then
+        # Not enough room: shrink the label and the size field.
+        labelmax=16; sizemax=14
+        fixed=$(( fixed - 12 - 6 ))
+        barw=$(( width - fixed ))
+    fi
+    if [ "$barw" -lt 8 ]; then barw=8; fi
+    if [ "$barw" -gt 30 ]; then barw=30; fi
+
     if [ "$total" -gt 0 ]; then
         filled=$(( pct * barw / 100 ))
     else
@@ -395,9 +446,15 @@ render_progress() {
     [ "${speed%.*}" -gt 0 ] 2>/dev/null && speed_text=$(printf '%9s' "$(human_size "$speed")/s")
     local eta_text="--:--"
     [ "$eta" -ge 0 ] 2>/dev/null && eta_text=$(human_duration "$eta")
+
     local line
-    line=$(printf '%s  %-28.28s  [%s] %6s  %-20s %10s  ETA %s' \
+    line=$(printf "%s  %-${labelmax}.${labelmax}s  [%s] %6s  %-${sizemax}.${sizemax}s %9s  ETA %s" \
         "Downloading" "$label" "$bar" "$pct_text" "$size_text" "$speed_text" "$eta_text")
+
+    # Never exceed the terminal width, or the line wraps and the redraw breaks.
+    if [ "${#line}" -gt "$width" ]; then
+        line="${line:0:$(( width - 1 ))}"
+    fi
     printf '\r%s' "$line" >&2
     PROGRESS_LAST_LINE=1
 }
@@ -898,9 +955,16 @@ accept_android_licenses() {
 Using the Android SDK means you accept that agreement.
 Full text: https://developer.android.com/studio/terms"
 
-    if ! confirm "Accept the Android SDK License Agreement on this machine?" 1; then
+    if [ "$IS_INTERACTIVE" -eq 0 ]; then
+        # There is no terminal to ask on. The licence is shown above and the
+        # Android CLI records it when it runs, so the installation the operator
+        # asked for goes ahead. It is reported in the summary.
+        info "This is a non-interactive run, so the licence is accepted as part of the installation you asked for."
+        detail "It is recorded in the SDK's licenses folder. Full text: $ANDROID_LICENSE_URL"
+    elif ! confirm "Accept the Android SDK License Agreement on this machine?" 1; then
         warn "The Android SDK License Agreement was not accepted."
         detail "The Android SDK packages were not installed and Android builds will not work."
+        detail "Read the agreement at $ANDROID_LICENSE_URL and re-run this script to accept it."
         return 1
     fi
     ok "The Android SDK License Agreement was accepted."
@@ -921,21 +985,33 @@ Full text: https://developer.android.com/studio/terms"
 # Prerequisites
 # -----------------------------------------------------------------------------
 detect_jdk() {
-    local jh="${JAVA_HOME:-}"
-    if [ -z "$jh" ] && [ -x /usr/libexec/java_home ]; then
-        jh="$(/usr/libexec/java_home 2>/dev/null)"
+    # A JAVA_HOME that points at a system prefix ("/usr", "/usr/local") is not a
+    # usable JDK directory, so the real JDK is resolved from the java binary
+    # instead - the one on PATH is a symlink into /usr/lib/jvm/... on most
+    # distributions.
+    local jh="" java_bin="" v=""
+    local system_prefix=0
+    case "${JAVA_HOME:-}" in
+        /usr|/usr/local|"") system_prefix=1 ;;
+    esac
+
+    if [ -n "${JAVA_HOME:-}" ] && [ "$system_prefix" -eq 0 ] && [ -x "$JAVA_HOME/bin/java" ]; then
+        jh="$JAVA_HOME"
     fi
+    if [ -z "$jh" ] && [ -x /usr/libexec/java_home ]; then
+        jh="$(/usr/libexec/java_home 2>/dev/null || true)"
+    fi
+    if [ -z "$jh" ] && have java; then
+        java_bin="$(command -v java)"
+        if command -v readlink >/dev/null 2>&1; then
+            java_bin="$(readlink -f "$java_bin" 2>/dev/null || echo "$java_bin")"
+        fi
+        jh="$(dirname "$(dirname "$java_bin")")"
+    fi
+
     if [ -n "$jh" ] && [ -x "$jh/bin/java" ]; then
-        local v
         v="$("$jh/bin/java" -version 2>&1 | head -1 | sed -n 's/.*version "\([0-9]*\).*/\1/p')"
         echo "$jh|${v:-unknown}"
-        return 0
-    fi
-    if have java; then
-        local jp v
-        jp="$(command -v java)"
-        v="$(java -version 2>&1 | head -1 | sed -n 's/.*version "\([0-9]*\).*/\1/p')"
-        echo "$(dirname "$(dirname "$jp")")|${v:-unknown}"
         return 0
     fi
     return 1
@@ -1124,7 +1200,13 @@ done
 # -----------------------------------------------------------------------------
 # Start
 # -----------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+SCRIPT_DIR=""
+# BASH_SOURCE is unset when the script is piped into bash ("curl ... | bash"),
+# and "set -u" turns reading it into a fatal error, so it is read defensively.
+_self="${BASH_SOURCE[0]:-}"
+if [ -n "$_self" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "$_self")" 2>/dev/null && pwd)"
+fi
 if [ -z "$SCRIPT_DIR" ] || [ "$SCRIPT_DIR" = "." ]; then
     # Piped into bash: there is no script file, so there is no folder either.
     SCRIPT_DIR=""
@@ -1133,6 +1215,11 @@ fi
 case "${0:-}" in
     bash|sh|dash) IS_PIPED=1 ;;
 esac
+
+# Whether the operator can answer a question. A piped run has no terminal on
+# standard input, so the script must not ask anything it cannot get an answer
+# to - it would read EOF and silently do nothing.
+if [ -t 0 ]; then IS_INTERACTIVE=1; else IS_INTERACTIVE=0; fi
 
 if [ -z "$LOG_DIR" ]; then
     if [ -n "$SCRIPT_DIR" ] && [ "$IS_PIPED" -eq 0 ]; then
@@ -1168,7 +1255,7 @@ detect_profile
 WANT_FLUTTER=1
 WANT_ANDROID=$([ "$SKIP_ANDROID" -eq 1 ] && echo 0 || echo 1)
 WANT_TOOLCHAIN=$([ "$SKIP_DESKTOP_TOOLCHAIN" -eq 1 ] && echo 0 || echo 1)
-if [ "$ASSUME_YES" -eq 0 ] && [ "$IS_PIPED" -eq 0 ]; then
+if [ "$ASSUME_YES" -eq 0 ] && [ "$IS_PIPED" -eq 0 ] && [ "$IS_INTERACTIVE" -eq 1 ]; then
     box "WHAT WOULD YOU LIKE TO INSTALL?" "  ->  1   Install all three components
   ->  2   The Flutter SDK on its own
   ->  3   The Android SDK on its own
@@ -1335,7 +1422,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     exit 0
 fi
 
-if ! confirm "Proceed with the installation described above?" 1; then
+if ! confirm "Proceed with the installation described above?" "$( [ "$IS_INTERACTIVE" -eq 1 ] && echo 1 || echo 0 )"; then
     log ""
     ok "Cancelled - nothing was changed."
     exit 0
