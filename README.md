@@ -448,6 +448,17 @@ pattern, not of this project. If that trade-off is not for you, download the fil
 and read it — each installer is a single readable file, and every URL it uses
 is listed in [How it works](#how-it-works).
 
+**For a reproducible install, pin a version.** `main` moves, and the CDN that
+serves it can briefly lag behind a push. Use a tag or a commit instead:
+
+```powershell
+irm https://raw.githubusercontent.com/kernelk14/flutstaller/v0.1.0/install.ps1 | iex
+```
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kernelk14/flutstaller/v0.1.0/install.sh | bash
+```
+
 ---
 
 ## Verification
